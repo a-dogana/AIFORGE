@@ -1,0 +1,39 @@
+=== AIFORGE: Running Experiment from configs/digits_mlp_student.yaml ===
+Random seed set to 42
+=== AIFORGE Resource Report ===
+Platform: Darwin arm64 25.2.0
+Total RAM: 8.00 GB
+Available RAM: 1.31 GB
+Recommended Compute Device: mps
+===============================
+
+Loading data...
+Initializing architecture...
+Student Model Parameters: 1210
+Initializing Teacher Engine (Experiment ID: 08d48b4c)...
+Teacher Model Parameters: 33738
+Starting training...
+TrainingEngine initialized. Using device: mps
+Epoch 1/50 - Train Loss: 10.8214 - Val Loss: 0.8654 - Val Acc: 0.6877 - LR: 0.005000
+Epoch 2/50 - Train Loss: 4.8764 - Val Loss: 0.3443 - Val Acc: 0.8699 - LR: 0.005000
+Epoch 3/50 - Train Loss: 1.9528 - Val Loss: 0.1743 - Val Acc: 0.9405 - LR: 0.005000
+Epoch 4/50 - Train Loss: 1.0817 - Val Loss: 0.1185 - Val Acc: 0.9554 - LR: 0.005000
+Epoch 5/50 - Train Loss: 0.7449 - Val Loss: 0.0933 - Val Acc: 0.9703 - LR: 0.005000
+Epoch 6/50 - Train Loss: 0.5791 - Val Loss: 0.0813 - Val Acc: 0.9740 - LR: 0.005000
+Epoch 7/50 - Train Loss: 0.4740 - Val Loss: 0.0724 - Val Acc: 0.9851 - LR: 0.005000
+Epoch 8/50 - Train Loss: 0.4025 - Val Loss: 0.0695 - Val Acc: 0.9703 - LR: 0.005000
+Epoch 9/50 - Train Loss: 0.3512 - Val Loss: 0.0701 - Val Acc: 0.9777 - LR: 0.005000
+Epoch 10/50 - Train Loss: 0.3120 - Val Loss: 0.0688 - Val Acc: 0.9814 - LR: 0.005000
+Epoch 11/50 - Train Loss: 0.2847 - Val Loss: 0.0705 - Val Acc: 0.9740 - LR: 0.005000
+Epoch 12/50 - Train Loss: 0.2588 - Val Loss: 0.0753 - Val Acc: 0.9665 - LR: 0.005000
+Epoch 13/50 - Train Loss: 0.2373 - Val Loss: 0.0727 - Val Acc: 0.9740 - LR: 0.005000
+Epoch 14/50 - Train Loss: 0.2220 - Val Loss: 0.0790 - Val Acc: 0.9703 - LR: 0.005000
+Epoch 15/50 - Train Loss: 0.2067 - Val Loss: 0.0834 - Val Acc: 0.9665 - LR: 0.005000
+Early stopping triggered at epoch 15 (patience=5)
+Evaluating model...
+
+--- Evaluation Results ---
+Test Accuracy: 0.9410
+Saving results and checkpoint to registry...
+Experiment saved to registry: registry/exp_14a9c812.json
+=== Experiment Complete ===

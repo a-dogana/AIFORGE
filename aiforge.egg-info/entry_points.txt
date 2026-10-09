@@ -1,0 +1,2 @@
+[console_scripts]
+aiforge = aiforge_cli:main

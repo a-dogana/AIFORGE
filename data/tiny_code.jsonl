@@ -1,0 +1,5 @@
+{"instruction": "Add two numbers", "input": "", "output": "def add(a, b):\n    return a + b"}
+{"instruction": "Subtract two numbers", "input": "", "output": "def sub(a, b):\n    return a - b"}
+{"instruction": "Multiply two numbers", "input": "", "output": "def mul(a, b):\n    return a * b"}
+{"instruction": "Divide two numbers", "input": "", "output": "def div(a, b):\n    return a / b"}
+{"instruction": "Modulo two numbers", "input": "", "output": "def mod(a, b):\n    return a % b"}

@@ -1,0 +1,33 @@
+experiment_name: "Digits Distillation Tuning Demo"
+domain: "vision"
+task: "classification"
+data:
+  type: "digits_builtin"
+architecture:
+  type: "mlp"
+  mlp_config:
+    input_size: 64
+    hidden_sizes: [16]
+    output_size: 10
+batch_size: 32
+epochs: 5
+learning_rate: 0.005
+device: "auto"
+seed: 42
+distillation:
+  enabled: true
+  teacher_experiment_id: "08d48b4c" # Example teacher ID
+tuning:
+  enabled: true
+  trials: 5
+  metric: "val_loss"
+  mode: "min"
+  search_space:
+    - name: "distillation.temperature"
+      type: "float"
+      low: 1.0
+      high: 5.0
+    - name: "distillation.alpha"
+      type: "float"
+      low: 0.1
+      high: 0.9

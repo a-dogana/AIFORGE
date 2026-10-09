@@ -1,0 +1,2 @@
+{"instruction": "Write a python function to print hello world", "input": "", "output": "def hello_world():\n    print('hello world')"}
+{"instruction": "Write a python function to add two numbers", "input": "", "output": "def add(a, b):\n    return a + b"}

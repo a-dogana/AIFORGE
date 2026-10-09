@@ -1,0 +1,46 @@
+=== AIFORGE: Running AutoTuning from configs/digits_mlp_tune.yaml ===
+Random seed set to 42
+=== AIFORGE Resource Report ===
+Platform: Darwin arm64 25.2.0
+Total RAM: 8.00 GB
+Available RAM: 1.37 GB
+Recommended Compute Device: mps
+===============================
+
+Starting optimization study...
+TrainingEngine initialized. Using device: mps
+Epoch 1/5 - Train Loss: 1.6036 - Val Loss: 0.5629 - Val Acc: 0.8736 - LR: 0.005510
+Epoch 2/5 - Train Loss: 0.3233 - Val Loss: 0.1378 - Val Acc: 0.9628 - LR: 0.005510
+Epoch 3/5 - Train Loss: 0.1209 - Val Loss: 0.0948 - Val Acc: 0.9665 - LR: 0.005510
+Epoch 4/5 - Train Loss: 0.0604 - Val Loss: 0.0989 - Val Acc: 0.9703 - LR: 0.005510
+Epoch 5/5 - Train Loss: 0.0375 - Val Loss: 0.0888 - Val Acc: 0.9740 - LR: 0.005510
+TrainingEngine initialized. Using device: mps
+Epoch 1/5 - Train Loss: 1.0825 - Val Loss: 0.2325 - Val Acc: 0.9554 - LR: 0.003126
+Epoch 2/5 - Train Loss: 0.1532 - Val Loss: 0.1071 - Val Acc: 0.9703 - LR: 0.003126
+Epoch 3/5 - Train Loss: 0.0653 - Val Loss: 0.1104 - Val Acc: 0.9665 - LR: 0.003126
+Epoch 4/5 - Train Loss: 0.0359 - Val Loss: 0.0947 - Val Acc: 0.9703 - LR: 0.003126
+Epoch 5/5 - Train Loss: 0.0179 - Val Loss: 0.1038 - Val Acc: 0.9740 - LR: 0.003126
+TrainingEngine initialized. Using device: mps
+Epoch 1/5 - Train Loss: 2.2714 - Val Loss: 2.2078 - Val Acc: 0.2900 - LR: 0.000171
+Epoch 2/5 - Train Loss: 2.1687 - Val Loss: 2.0757 - Val Acc: 0.5316 - LR: 0.000171
+Epoch 3/5 - Train Loss: 2.0023 - Val Loss: 1.8542 - Val Acc: 0.6468 - LR: 0.000171
+Epoch 4/5 - Train Loss: 1.7563 - Val Loss: 1.5696 - Val Acc: 0.7026 - LR: 0.000171
+Epoch 5/5 - Train Loss: 1.4682 - Val Loss: 1.2731 - Val Acc: 0.7844 - LR: 0.000171
+TrainingEngine initialized. Using device: mps
+Epoch 1/5 - Train Loss: 1.5431 - Val Loss: 0.4796 - Val Acc: 0.9071 - LR: 0.001752
+Epoch 2/5 - Train Loss: 0.2713 - Val Loss: 0.1711 - Val Acc: 0.9554 - LR: 0.001752
+Epoch 3/5 - Train Loss: 0.1266 - Val Loss: 0.1252 - Val Acc: 0.9665 - LR: 0.001752
+Epoch 4/5 - Train Loss: 0.0758 - Val Loss: 0.0937 - Val Acc: 0.9628 - LR: 0.001752
+Epoch 5/5 - Train Loss: 0.0516 - Val Loss: 0.1028 - Val Acc: 0.9554 - LR: 0.001752
+TrainingEngine initialized. Using device: mps
+Epoch 1/5 - Train Loss: 1.7738 - Val Loss: 0.9066 - Val Acc: 0.8401 - LR: 0.001228
+Epoch 2/5 - Train Loss: 0.5151 - Val Loss: 0.2823 - Val Acc: 0.9368 - LR: 0.001228
+Epoch 3/5 - Train Loss: 0.2117 - Val Loss: 0.1670 - Val Acc: 0.9628 - LR: 0.001228
+Epoch 4/5 - Train Loss: 0.1196 - Val Loss: 0.1337 - Val Acc: 0.9628 - LR: 0.001228
+Epoch 5/5 - Train Loss: 0.0793 - Val Loss: 0.1087 - Val Acc: 0.9665 - LR: 0.001228
+
+=== Tuning Complete ===
+Best trial value: 0.9739776951672863
+Best hyperparameters:
+  learning_rate: 0.005510021812562142
+  batch_size: 64

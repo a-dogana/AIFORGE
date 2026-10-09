@@ -1,0 +1,27 @@
+experiment_name: "Tabular Classification Demo"
+domain: "tabular"
+task: "classification"
+data:
+  type: "csv"
+  csv_config:
+    path: "dummy_path_to_data.csv"
+    target_column: "target"
+    exclude_columns: ["id", "timestamp"]
+    missing_values: "mean"
+architecture:
+  type: "mlp"
+  mlp_config:
+    input_size: 10 # Adjust to your CSV feature count
+    hidden_sizes: [64, 32]
+    output_size: 2
+batch_size: 32
+epochs: 10
+learning_rate: 0.001
+device: "auto"
+seed: 42
+early_stopping:
+  enabled: true
+  metric: "val_loss"
+  mode: "min"
+  patience: 3
+  min_epochs: 2

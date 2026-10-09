@@ -1,0 +1,35 @@
+experiment_name: "Digits AutoTuning Demo"
+domain: "vision"
+task: "classification"
+data:
+  type: "digits_builtin"
+architecture:
+  type: "mlp"
+  mlp_config:
+    input_size: 64
+    hidden_sizes: [64, 32]
+    output_size: 10
+batch_size: 32
+epochs: 5
+device: "auto"
+seed: 42
+early_stopping:
+  enabled: true
+  metric: "val_loss"
+  mode: "min"
+  patience: 3
+  min_epochs: 2
+tuning:
+  enabled: true
+  trials: 5
+  metric: "val_accuracy"
+  mode: "max"
+  search_space:
+    - name: "learning_rate"
+      type: "float"
+      low: 0.0001
+      high: 0.01
+      log: true
+    - name: "batch_size"
+      type: "categorical"
+      choices: [16, 32, 64]

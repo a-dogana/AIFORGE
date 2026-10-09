@@ -1,0 +1,22 @@
+experiment_name: "Teacher MLP"
+domain: "vision"
+task: "classification"
+data:
+  type: "digits_builtin"
+architecture:
+  type: "mlp"
+  mlp_config:
+    input_size: 64
+    hidden_sizes: [128, 128, 64]
+    output_size: 10
+batch_size: 32
+epochs: 50
+learning_rate: 0.005
+device: "auto"
+seed: 42
+early_stopping:
+  enabled: true
+  metric: "val_loss"
+  mode: "min"
+  patience: 5
+  min_epochs: 10

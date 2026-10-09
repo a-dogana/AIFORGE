@@ -1,0 +1,19 @@
+experiment_name: "Code Specialization GPT2"
+domain: "llm"
+task: "generation"
+data:
+  type: "jsonl"
+architecture:
+  type: "llm"
+  llm_config:
+    model_id: "gpt2"
+    allow_download: true
+    max_seq_length: 128
+    lora_enabled: true
+    lora_r: 8
+    lora_alpha: 16
+batch_size: 1
+epochs: 1
+learning_rate: 0.0002
+device: "auto"
+seed: 42

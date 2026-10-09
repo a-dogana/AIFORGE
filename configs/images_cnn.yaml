@@ -1,0 +1,27 @@
+experiment_name: "Image Classification Demo"
+domain: "vision"
+task: "classification"
+data:
+  type: "images"
+  image_config:
+    path: "dummy_path_to_images"
+    image_size: [64, 64]
+    mode: "folders" # expects train/ and val/ subdirectories
+architecture:
+  type: "cnn"
+  cnn_config:
+    in_channels: 3
+    conv_layers: [32, 64]
+    hidden_sizes: [128]
+    output_size: 10
+batch_size: 32
+epochs: 10
+learning_rate: 0.001
+device: "auto"
+seed: 42
+early_stopping:
+  enabled: true
+  metric: "val_loss"
+  mode: "min"
+  patience: 3
+  min_epochs: 2

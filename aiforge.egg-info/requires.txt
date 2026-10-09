@@ -1,0 +1,8 @@
+torch
+torchvision
+torchaudio
+pydantic
+pyyaml
+numpy
+scikit-learn
+psutil

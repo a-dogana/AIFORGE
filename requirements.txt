@@ -1,0 +1,10 @@
+torch
+torchvision
+torchaudio
+pydantic
+pyyaml
+numpy
+scikit-learn
+pytest
+pytest-cov
+psutil

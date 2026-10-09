@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: aiforge
+Version: 0.2.0
+Requires-Dist: torch
+Requires-Dist: torchvision
+Requires-Dist: torchaudio
+Requires-Dist: pydantic
+Requires-Dist: pyyaml
+Requires-Dist: numpy
+Requires-Dist: scikit-learn
+Requires-Dist: psutil
+Dynamic: requires-dist

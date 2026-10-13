@@ -6,6 +6,8 @@
     <title>AIFORGE Dashboard - Studio</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js 3.x CDN (Reactive Framework Zero-Build) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -19,46 +21,54 @@
         }
     </script>
     <style>
-        .section { display: none !important; }
-        .section.active { display: block !important; }
-        #playground.section.active { display: flex !important; }
+        [x-cloak] { display: none !important; }
     </style>
 </head>
-<body class="h-full text-slate-800 antialiased flex flex-col font-sans">
+<body class="h-full text-slate-800 antialiased flex flex-col font-sans" x-data="aiforgeApp()" x-init="init()">
 
-    <!-- Top Navigation Bar (Minimal Header) -->
+    <!-- Top Navigation Bar -->
     <header class="border-b border-slate-200 bg-white sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3">
-                <div class="w-8 h-8 rounded-lg bg-black flex items-center justify-center text-white font-mono font-bold text-sm tracking-tighter">
+                <div class="w-8 h-8 rounded-lg bg-black flex items-center justify-center text-white font-mono font-bold text-sm tracking-tighter shadow-sm">
                     AF
                 </div>
-                <span class="text-base font-semibold tracking-tight text-slate-900">AIFORGE <span class="text-xs font-normal text-slate-500 ml-1 px-1.5 py-0.5 bg-slate-100 rounded border border-slate-200">v1.3</span></span>
+                <span class="text-base font-semibold tracking-tight text-slate-900">
+                    AIFORGE 
+                    <span class="text-xs font-normal text-slate-500 ml-1 px-1.5 py-0.5 bg-slate-100 rounded border border-slate-200">v2.0 (Alpine.js)</span>
+                </span>
             </div>
             
             <div class="flex items-center space-x-3">
-                <!-- Global Model Switcher Visible in ALL Pages -->
+                <!-- Global Model Switcher -->
                 <div class="hidden sm:flex items-center bg-slate-50 border border-slate-200 rounded-lg p-1 space-x-2">
                     <span class="text-xs text-slate-500 font-medium pl-2">Modello Attivo:</span>
-                    <select id="global-header-model-select" class="bg-transparent text-xs font-medium text-slate-800 py-1 pr-3 focus:outline-none cursor-pointer">
-                        <optgroup label="Modelli Base (Puri)">
-                            <option value="BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B</option>
-                            <option value="BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B</option>
-                            <option value="BASE:openai-community/gpt2">GPT-2 Base</option>
+                    <select x-model="activeModel" class="bg-transparent text-xs font-medium text-slate-800 py-1 pr-3 focus:outline-none cursor-pointer">
+                        <optgroup label="Modelli Base di Partenza">
+                            <option value="BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Puro)</option>
+                            <option value="BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Puro)</option>
+                            <option value="BASE:openai-community/gpt2">GPT-2 Base (124M)</option>
                         </optgroup>
                         <optgroup label="I tuoi Adapter (Fine-Tuned)">
-                            <option value="c_coder_v1">C_Code_Generator_v1</option>
-                            <option value="soup_e2e">E2E_Soup_Test</option>
+                            <template x-for="exp in experiments" :key="exp.id">
+                                <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
+                            </template>
                         </optgroup>
                     </select>
-                    <button id="header-btn-toggle-server" class="bg-slate-900 hover:bg-slate-800 text-white text-xs px-2.5 py-1 rounded font-medium transition-colors shadow-xs">
-                        Avvia
+                    <button @click="toggleServer()" 
+                            class="text-white text-xs px-2.5 py-1 rounded font-medium transition-colors shadow-xs"
+                            :class="serverStatus === 'online' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-slate-900 hover:bg-slate-800'"
+                            x-text="serverStatus === 'online' ? 'Ferma' : 'Avvia'">
                     </button>
                 </div>
 
+                <!-- Server Status Indicator -->
                 <div class="flex items-center space-x-2 text-xs">
-                    <span id="server-status" class="inline-flex items-center px-2 py-0.5 rounded-full font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                        <span class="w-1.5 h-1.5 mr-1.5 rounded-full bg-rose-500"></span>Offline
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full font-medium"
+                          :class="serverStatus === 'online' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'">
+                        <span class="w-1.5 h-1.5 mr-1.5 rounded-full"
+                              :class="serverStatus === 'online' ? 'bg-emerald-500' : 'bg-rose-500'"></span>
+                        <span x-text="serverStatus === 'online' ? 'Online' : 'Offline'"></span>
                     </span>
                 </div>
             </div>
@@ -70,35 +80,47 @@
         <!-- Left Sidebar Navigation -->
         <aside class="w-full md:w-56 shrink-0">
             <nav class="space-y-1">
-                <button class="nav-item w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors" data-target="forge">
-                    <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-                    Forge
-                </button>
-                <button class="nav-item w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors" data-target="merge-lab">
-                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                    Merge Lab
-                </button>
-
-
-                <button class="nav-item active w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-900 bg-slate-100 transition-colors" data-target="dashboard">
+                <button @click="switchTab('dashboard')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'dashboard' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
                     <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
                     Dashboard
                 </button>
-                <button class="nav-item w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors" data-target="models">
+                <button @click="switchTab('merge-lab')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'merge-lab' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
+                    <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Merge Lab
+                </button>
+                <button @click="switchTab('forge')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'forge' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
+                    <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                    La Forgia (LoRA)
+                </button>
+                <button @click="switchTab('models')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'models' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
                     <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                     Modelli Base
                 </button>
-                <button class="nav-item w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors" data-target="playground">
+                <button @click="switchTab('playground')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'playground' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
                     <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
-                    LLM Playground
+                    Assistant Chat
                 </button>
-                <button class="nav-item w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors" data-target="experiments">
+                <button @click="switchTab('experiments')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'experiments' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
                     <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
                     Esperimenti
                 </button>
-                <button class="nav-item w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors" data-target="connectors">
+                <button @click="switchTab('connectors')" 
+                        class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
+                        :class="tab === 'connectors' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
                     <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
-                    Connettori (OpenAI Std)
+                    Connettori API
                 </button>
             </nav>
         </aside>
@@ -107,16 +129,22 @@
         <main class="flex-1 bg-white border border-slate-200 rounded-xl p-6 sm:p-8 shadow-sm">
             
             <!-- 1. DASHBOARD -->
-            <div id="dashboard" class="section active space-y-6">
+            <div x-show="tab === 'dashboard'" x-cloak class="space-y-6">
                 <div>
-                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Overview</h2>
-                    <p class="text-sm text-slate-500 mt-1">Gestione rapida degli esperimenti e dello stato dei servizi di inferenza locale.</p>
+                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Overview Laboratorio</h2>
+                    <p class="text-sm text-slate-500 mt-1">Gestione dello stato dei servizi di inferenza locale e metadati dell'ambiente.</p>
                 </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-y border-slate-100 py-4">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 border-y border-slate-100 py-4">
                     <div class="bg-slate-50 rounded-lg p-4 border border-slate-100">
                         <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">Esperimenti Registrati</span>
-                        <div id="stat-total-experiments" class="text-2xl font-semibold text-slate-900 mt-1">1</div>
+                        <div class="text-2xl font-semibold text-slate-900 mt-1" x-text="statTotalExperiments"></div>
+                    </div>
+                    <div class="bg-slate-50 rounded-lg p-4 border border-slate-100">
+                        <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">Hardware Engine</span>
+                        <div class="text-sm font-medium text-slate-900 mt-2 flex items-center">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>Apple Silicon MPS (Unified 8GB)
+                        </div>
                     </div>
                     <div class="bg-slate-50 rounded-lg p-4 border border-slate-100">
                         <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">Storage Registry</span>
@@ -126,139 +154,305 @@
 
                 <div class="space-y-4">
                     <h3 class="text-sm font-semibold text-slate-900 uppercase tracking-wider">Controllo Engine LLM</h3>
-                    <p class="text-xs text-slate-500">Scegli se avviare un modello fine-tunato con i tuoi adapter LoRA oppure direttamente un Modello Base (come Qwen 2.5 Coder puro).</p>
+                    <p class="text-xs text-slate-500">Scegli il modello da eseguire sul server locale di inferenza (porta 8001).</p>
                     
                     <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                        <select id="llm-experiment-select" class="block w-full rounded-lg border border-slate-300 py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 font-sans">
-                            <optgroup label="Modelli Fine-Tuned (I tuoi Adapter)">
-                                <option value="">-- Seleziona un modello addestrato --</option>
+                        <select x-model="activeModel" class="block w-full rounded-lg border border-slate-300 py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 font-sans">
+                            <optgroup label="Modelli Base di Partenza">
+                                <option value="BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Puro)</option>
+                                <option value="BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Puro)</option>
+                                <option value="BASE:openai-community/gpt2">GPT-2 Base (124M)</option>
                             </optgroup>
-                            <optgroup label="Modelli Base di Partenza (Out-of-the-box)">
-                                <option value="BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Puro - Senza Adapter)</option>
-                                <option value="BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Puro - Senza Adapter)</option>
-                                <option value="BASE:openai-community/gpt2">GPT-2 Base (Puro)</option>
+                            <optgroup label="I tuoi Adapter (Fine-Tuned)">
+                                <template x-for="exp in experiments" :key="exp.id">
+                                    <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
+                                </template>
                             </optgroup>
                         </select>
-                        <button id="btn-start-server" class="shrink-0 bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-5 py-2.5 rounded-lg transition-colors shadow-sm">
+                        <button @click="startServer(activeModel)" 
+                                :disabled="serverStatus === 'online'"
+                                class="shrink-0 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-medium text-sm px-5 py-2.5 rounded-lg transition-colors shadow-sm">
                             Avvia Server
                         </button>
-                        <button id="btn-stop-server" class="shrink-0 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 font-medium text-sm px-4 py-2.5 rounded-lg transition-colors">
+                        <button @click="stopServer()" 
+                                :disabled="serverStatus !== 'online'"
+                                class="shrink-0 bg-white hover:bg-rose-50 disabled:opacity-50 text-rose-600 border border-rose-200 font-medium text-sm px-4 py-2.5 rounded-lg transition-colors">
                             Ferma
                         </button>
                     </div>
-                    <div id="server-msg" class="text-xs font-medium min-h-[1rem]"></div>
+                    <div class="text-xs font-medium min-h-[1rem]" :class="serverMsgColor" x-text="serverMsg"></div>
                 </div>
             </div>
 
-            <!-- 2. BASE MODELS (NUOVA SCHEDA MODELLI DI PARTENZA) -->
-            <div id="models" class="section space-y-6">
+            <!-- 2. MODEL MERGE LAB -->
+            <div x-show="tab === 'merge-lab'" x-cloak class="space-y-6">
                 <div>
-                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Modelli di Partenza (Base Foundation)</h2>
-                    <p class="text-sm text-slate-500 mt-1">Scegli e scarica in locale il modello moderno su cui applicare il fine-tuning LoRA.</p>
+                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Model Merge Lab</h2>
+                    <p class="text-sm text-slate-500 mt-1">Unisci modelli o fondi adattatori LoRA nel modello base con strategie SLERP, DARE o pesate.</p>
+                </div>
+                
+                <div class="bg-slate-50 rounded-xl border border-slate-200 p-6 space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-700 mb-2">Modello A (Base/Target)</label>
+                            <select x-model="merge.modelA" class="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-slate-900">
+                                <template x-for="exp in experiments" :key="'a-' + exp.id">
+                                    <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-700 mb-2">Modello B (Adapter/Source)</label>
+                            <select x-model="merge.modelB" class="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-slate-900">
+                                <template x-for="exp in experiments" :key="'b-' + exp.id">
+                                    <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-700 mb-2">Strategia di Fusione</label>
+                            <select x-model="merge.strategy" class="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-slate-900">
+                                <option value="slerp">SLERP (Spherical Linear Interpolation)</option>
+                                <option value="dare_linear">DARE (Drop And Rescale Delta)</option>
+                                <option value="linear_weight">Linear Interpolation</option>
+                                <option value="lora_merge">LoRA Merge (Adapter nel Base)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="text-xs font-medium text-slate-700">Peso Interpolazione (&alpha;)</label>
+                                <span class="text-xs font-mono font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200" 
+                                      x-text="Number(merge.alpha).toFixed(2)">0.50</span>
+                            </div>
+                            <input type="range" x-model="merge.alpha" min="0" max="1" step="0.05" class="w-full h-2 bg-slate-200 rounded-lg cursor-pointer accent-slate-900 mt-2">
+                            <div class="flex justify-between text-[11px] text-slate-400 mt-1">
+                                <span>100% Modello A</span>
+                                <span>Bilanciato (50/50)</span>
+                                <span>100% Modello B</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-wrap gap-3 pt-2">
+                        <button @click="runPreflight()" 
+                                :disabled="merge.isPreflighting"
+                                class="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors shadow-xs">
+                            Verifica Compatibilità
+                        </button>
+                        <button @click="executeMerge()" 
+                                :disabled="merge.isMerging || !merge.modelA || !merge.modelB"
+                                class="px-5 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors shadow-sm">
+                            <span x-text="merge.isMerging ? 'Esecuzione in corso...' : 'Esegui Merge'"></span>
+                        </button>
+                    </div>
+
+                    <!-- Preflight Result Card -->
+                    <div x-show="merge.preflight" x-cloak class="p-4 rounded-lg border text-sm"
+                         :class="merge.preflight?.status === 'COMPATIBLE' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'">
+                        <div class="font-semibold flex items-center space-x-2">
+                            <span x-text="merge.preflight?.status === 'COMPATIBLE' ? '✅ Modelli Compatibili' : '❌ Incompatibilità Rilevata'"></span>
+                        </div>
+                        <div class="text-xs mt-1" x-text="'Stima RAM richiesta: ' + (merge.preflight?.estimated_ram_mb || 0) + ' MB'"></div>
+                    </div>
+
+                    <!-- Post-Merge Actions Toolbar -->
+                    <div x-show="merge.lastMergedId" x-cloak class="p-5 rounded-lg bg-emerald-50 border border-emerald-200 space-y-3">
+                        <div class="flex items-center space-x-2 text-emerald-800 font-semibold text-sm">
+                            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            <span x-text="'Nuovo Modello Creato: ' + merge.lastMergedId"></span>
+                        </div>
+                        <p class="text-xs text-emerald-700">Valuta scientificamente la Perplexity contro regressioni o esportalo in 1 clic per Ollama.</p>
+                        <div class="flex flex-wrap gap-3">
+                            <button @click="runEval()" :disabled="merge.evalLoading" 
+                                    class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs">
+                                📊 Calcola Perplexity / Accuratezza
+                            </button>
+                            <button @click="exportOllama()" :disabled="merge.ollamaLoading" 
+                                    class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs">
+                                🦙 Esporta Modelfile (Ollama)
+                            </button>
+                        </div>
+                        <div x-show="merge.evalOutputHtml || merge.ollamaOutputHtml" 
+                             class="p-3 bg-white rounded border border-emerald-200 font-mono text-xs text-slate-800 whitespace-pre-wrap"
+                             x-html="merge.evalOutputHtml || merge.ollamaOutputHtml"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. LA FORGIA (LoRA / QLoRA TRAINING) -->
+            <div x-show="tab === 'forge'" x-cloak class="space-y-6">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">La Forgia (LoRA / QLoRA)</h2>
+                    <p class="text-sm text-slate-500 mt-1">Specializza i modelli linguistici generando dataset sintetici ed eseguendo il fine-tuning.</p>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="space-y-4 bg-slate-50 p-5 border border-slate-200 rounded-xl">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-700 mb-1">Nome Esperimento</label>
+                            <input type="text" x-model="forge.name" placeholder="es. C_Specialist_v2" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-700 mb-1">Modello di Base</label>
+                            <select x-model="forge.model" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                                <option value="openai-community/gpt2">GPT-2 Base (124M)</option>
+                                <option value="Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Consigliato)</option>
+                                <option value="Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Pesante)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-700 mb-1">Argomento / Topic per Dataset Sintetico</label>
+                            <textarea x-model="forge.topic" rows="3" placeholder="es. Programmazione C concorrente e mutex su POSIX" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"></textarea>
+                        </div>
+
+                        <!-- QLoRA Toggle -->
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200">
+                            <div>
+                                <label for="forge-qlora-cb" class="text-xs font-semibold text-slate-900 block cursor-pointer">Attiva QLoRA (4-bit NF4)</label>
+                                <span class="text-[11px] text-slate-500 block">Riduce l'uso di RAM fino al 75% comprimendo i pesi base. Ideale per M1.</span>
+                            </div>
+                            <input type="checkbox" id="forge-qlora-cb" x-model="forge.qlora" class="w-4 h-4 text-slate-900 rounded border-slate-300 focus:ring-slate-900 cursor-pointer">
+                        </div>
+                        
+                        <button @click="startForge()" 
+                                :disabled="forge.isRunning"
+                                class="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-medium text-sm px-4 py-2.5 rounded-lg transition-colors shadow-sm">
+                            <span x-text="forge.isRunning ? 'Addestramento in Corso...' : 'Genera Dati & Addestra (Forgia)'"></span>
+                        </button>
+                    </div>
+                    
+                    <div class="flex flex-col space-y-3">
+                        <div>
+                            <div class="flex justify-between text-xs font-medium text-slate-700 mb-1">
+                                <span>Avanzamento Pipeline</span>
+                                <span x-text="forge.progress">0%</span>
+                            </div>
+                            <div class="w-full bg-slate-200 rounded-full h-2">
+                                <div class="bg-slate-900 h-2 rounded-full transition-all duration-300" :style="'width: ' + forge.progress"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex-1 bg-black rounded-lg border border-slate-800 p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[340px]" id="forge-terminal">
+                            <template x-for="(log, idx) in forge.terminalLogs" :key="idx">
+                                <div x-text="log"></div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. MODELLI BASE -->
+            <div x-show="tab === 'models'" x-cloak class="space-y-6">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Catalogo Modelli Base</h2>
+                    <p class="text-sm text-slate-500 mt-1">Architetture foundation ottimizzate per l'ambiente Apple Silicon.</p>
                 </div>
 
-                <div class="space-y-4" id="models-list-container">
-                    <!-- Qwen 2.5 Coder 0.5B -->
-                    <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors hover:border-slate-300">
+                <div class="space-y-4">
+                    <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-colors">
                         <div>
                             <div class="flex items-center space-x-2">
                                 <h3 class="font-semibold text-slate-900">Qwen 2.5 Coder 0.5B Instruct</h3>
                                 <span class="bg-emerald-50 text-emerald-700 text-xs px-2 py-0.5 rounded font-medium border border-emerald-200">Consigliato M1</span>
                             </div>
-                            <p class="text-xs text-slate-500 mt-1">Architettura avanzata (2024), perfetta per Mac da 8 GB. Prestazioni di codice eccezionali con ~1 GB di RAM.</p>
-                            <span class="text-xs font-mono text-slate-400 mt-2 block">HuggingFace ID: Qwen/Qwen2.5-Coder-0.5B-Instruct</span>
+                            <p class="text-xs text-slate-500 mt-1">Architettura avanzata (2024), perfetta per Mac 8GB. Prestazioni di codice eccezionali con ~1 GB di RAM.</p>
+                            <span class="text-xs font-mono text-slate-400 mt-1 block">Qwen/Qwen2.5-Coder-0.5B-Instruct</span>
                         </div>
-                        <button onclick="downloadModel('Qwen/Qwen2.5-Coder-0.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2.5 rounded-lg shrink-0 transition-colors">Scarica per Uso Locale</button>
+                        <button @click="startServer('BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shrink-0">Usa in Chat</button>
                     </div>
 
-                    <!-- Qwen 2.5 Coder 1.5B -->
-                    <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors hover:border-slate-300">
+                    <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-colors">
                         <div>
                             <div class="flex items-center space-x-2">
                                 <h3 class="font-semibold text-slate-900">Qwen 2.5 Coder 1.5B Instruct</h3>
                             </div>
                             <p class="text-xs text-slate-500 mt-1">Capacità di ragionamento superiore per codice C/Python complesso. Richiede circa 2.5 GB di RAM.</p>
-                            <span class="text-xs font-mono text-slate-400 mt-2 block">HuggingFace ID: Qwen/Qwen2.5-Coder-1.5B-Instruct</span>
+                            <span class="text-xs font-mono text-slate-400 mt-1 block">Qwen/Qwen2.5-Coder-1.5B-Instruct</span>
                         </div>
-                        <button onclick="downloadModel('Qwen/Qwen2.5-Coder-1.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2.5 rounded-lg shrink-0 transition-colors">Scarica per Uso Locale</button>
+                        <button @click="startServer('BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shrink-0">Usa in Chat</button>
                     </div>
 
-                    <!-- GPT-2 Base -->
-                    <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors hover:border-slate-300">
+                    <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-colors">
                         <div>
                             <div class="flex items-center space-x-2">
                                 <h3 class="font-semibold text-slate-900">GPT-2 Base (124M)</h3>
                             </div>
-                            <p class="text-xs text-slate-500 mt-1">Modello leggero classico, usato come banco di prova iniziale.</p>
-                            <span class="text-xs font-mono text-slate-400 mt-2 block">HuggingFace ID: openai-community/gpt2</span>
+                            <p class="text-xs text-slate-500 mt-1">Modello ultraleggero ideale per test istantanei della pipeline e debug.</p>
+                            <span class="text-xs font-mono text-slate-400 mt-1 block">openai-community/gpt2</span>
                         </div>
-                        <button onclick="downloadModel('openai-community/gpt2')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2.5 rounded-lg shrink-0 transition-colors">Scarica per Uso Locale</button>
+                        <button @click="startServer('BASE:openai-community/gpt2')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shrink-0">Usa in Chat</button>
                     </div>
                 </div>
-
-                <div id="model-download-status" class="text-xs font-mono p-3 rounded bg-slate-50 border border-slate-200 hidden"></div>
             </div>
 
-            <!-- 3. LLM CHAT (STILE CHATGPT) -->
-            <div id="playground" class="section flex flex-col h-[700px] -m-6 sm:-m-8">
-                <!-- Chat Header -->
+            <!-- 5. ASSISTANT CHAT PLAYGROUND -->
+            <div x-show="tab === 'playground'" x-cloak class="flex flex-col h-[700px] -m-6 sm:-m-8">
+                <!-- Header -->
                 <div class="px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between">
                     <div>
                         <h2 class="text-base font-semibold text-slate-900 tracking-tight">Assistant Chat</h2>
-                        <p class="text-xs text-slate-500">Inferenza locale con pesi LoRA attivi su Apple Silicon.</p>
+                        <p class="text-xs text-slate-500">Inferenza locale sul modello attivo con accelerazione Metal (MPS).</p>
                     </div>
-                    <!-- Quick Param Badges -->
                     <div class="flex items-center space-x-3 text-xs">
                         <div class="flex items-center space-x-1.5 text-slate-500 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
                             <span>Tokens:</span>
-                            <input type="number" id="max-tokens" value="120" min="1" max="512" class="w-12 bg-transparent font-mono text-slate-900 text-center focus:outline-none">
+                            <input type="number" x-model="chatMaxTokens" min="1" max="512" class="w-12 bg-transparent font-mono text-slate-900 text-center focus:outline-none">
                         </div>
                         <div class="flex items-center space-x-1.5 text-slate-500 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
                             <span>Temp:</span>
-                            <input type="number" id="temperature" value="0.3" step="0.1" min="0" max="2" class="w-10 bg-transparent font-mono text-slate-900 text-center focus:outline-none">
+                            <input type="number" x-model="chatTemperature" step="0.1" min="0" max="2" class="w-10 bg-transparent font-mono text-slate-900 text-center focus:outline-none">
                         </div>
-                        <button id="btn-clear-chat" class="text-slate-400 hover:text-slate-600 p-1" title="Pulisci cronologia">
+                        <button @click="clearChat()" class="text-slate-400 hover:text-slate-600 p-1" title="Pulisci chat">
                             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                         </button>
                     </div>
                 </div>
 
-                <!-- Chat Messages Feed -->
+                <!-- Messages Feed -->
                 <div id="chat-messages-container" class="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50">
-                    <!-- Welcome AI message -->
-                    <div class="flex items-start space-x-3 max-w-3xl">
-                        <div class="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-mono font-bold shrink-0 mt-0.5">
-                            AI
+                    <template x-for="(msg, idx) in chatMessages" :key="idx">
+                        <div class="flex items-start space-x-3 max-w-3xl" :class="msg.sender === 'user' ? 'ml-auto flex-row-reverse space-x-reverse' : ''">
+                            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 mt-0.5"
+                                 :class="msg.sender === 'user' ? 'bg-slate-200 text-slate-700' : 'bg-slate-900 text-white'"
+                                 x-text="msg.sender === 'user' ? 'TU' : 'AI'"></div>
+                            <div class="rounded-2xl px-4 py-3 text-sm leading-relaxed max-w-2xl whitespace-pre-wrap shadow-sm"
+                                 :class="msg.sender === 'user' ? 'bg-slate-900 text-white rounded-tr-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm'"
+                                 x-text="msg.text"></div>
                         </div>
-                        <div class="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-800 shadow-sm leading-relaxed max-w-2xl">
-                            Ciao! Sono il tuo modello locale specializzato. Chiedimi di scrivere o spiegare codice C o qualsiasi altro algoritmo.
-                        </div>
-                    </div>
+                    </template>
                 </div>
 
-                <!-- Input Footer Bar (ChatGPT Style) -->
+                <!-- Input Footer -->
                 <div class="p-4 sm:p-6 bg-white border-t border-slate-200">
                     <div class="max-w-3xl mx-auto">
-                        <div class="relative flex items-center bg-white border border-slate-300 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-slate-900 focus-within:border-transparent transition-all">
-                            <textarea id="prompt" rows="1" class="w-full py-3.5 pl-4 pr-14 text-sm bg-transparent resize-none focus:outline-none max-h-36 placeholder-slate-400" placeholder="Invia un messaggio al modello locale (es. Scrivi un programma C per invertire una stringa)..."></textarea>
-                            <button id="btn-generate" class="absolute right-2.5 p-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 text-white rounded-xl transition-colors shadow-sm disabled:cursor-not-allowed">
+                        <div class="relative flex items-center bg-white border border-slate-300 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-slate-900 transition-all">
+                            <textarea x-model="chatPrompt" 
+                                      @keydown.enter.prevent="if(!event.shiftKey) sendChat()"
+                                      rows="1" 
+                                      class="w-full py-3.5 pl-4 pr-14 text-sm bg-transparent resize-none focus:outline-none placeholder-slate-400" 
+                                      placeholder="Chiedi al modello locale (Invio per inviare, Shift+Invio per a capo)..."></textarea>
+                            <button @click="sendChat()" 
+                                    :disabled="isGenerating || !chatPrompt.trim()"
+                                    class="absolute right-2.5 p-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 text-white rounded-xl transition-colors shadow-sm disabled:cursor-not-allowed">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                             </button>
                         </div>
-                        <div class="flex items-center justify-between mt-2 px-1 text-[11px] text-slate-400">
-                            <span>AIFORGE Local Model Engine • MPS Acceleration</span>
-                            <span id="chat-latency" class="font-mono"></span>
+                        <div class="flex items-center justify-between mt-2 px-1 text-[11px] text-slate-400 font-mono">
+                            <span>AIFORGE Local Model Engine &bull; MPS Acceleration</span>
+                            <span x-text="chatLatency"></span>
                         </div>
-                        <div id="llm-error" class="text-xs text-rose-600 font-medium mt-1 hidden text-center"></div>
                     </div>
                 </div>
             </div>
 
-            <!-- 4. EXPERIMENTS TABLE -->
-            <div id="experiments" class="section space-y-6">
+            <!-- 6. ESPERIMENTI -->
+            <div x-show="tab === 'experiments'" x-cloak class="space-y-6">
                 <div>
                     <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Registro Esperimenti</h2>
-                    <p class="text-sm text-slate-500 mt-1">Storico degli addestramenti, checkpoint LoRA e metadati registrati.</p>
+                    <p class="text-sm text-slate-500 mt-1">Storico degli addestramenti, checkpoint LoRA e metadati salvati.</p>
                 </div>
 
                 <div class="overflow-x-auto border border-slate-200 rounded-lg">
@@ -272,193 +466,79 @@
                                 <th class="px-4 py-3 text-left font-medium text-slate-600">Data</th>
                             </tr>
                         </thead>
-                        <tbody id="experiments-table-body" class="divide-y divide-slate-100 bg-white"></tbody>
+                        <tbody class="divide-y divide-slate-100 bg-white">
+                            <template x-for="exp in experiments" :key="exp.id">
+                                <tr class="hover:bg-slate-50 cursor-pointer transition-colors" @click="inspectExperiment(exp)">
+                                    <td class="px-4 py-3 font-mono text-xs" x-text="exp.id"></td>
+                                    <td class="px-4 py-3 font-medium text-slate-900" x-text="exp.experiment_name || exp.id"></td>
+                                    <td class="px-4 py-3 text-slate-600" x-text="exp.config?.domain || 'N/A'"></td>
+                                    <td class="px-4 py-3 text-slate-600" x-text="exp.config?.task || 'N/A'"></td>
+                                    <td class="px-4 py-3 text-slate-500 text-xs" x-text="exp.timestamp ? new Date(exp.timestamp).toLocaleString() : 'N/A'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
                     </table>
                 </div>
 
-                <div id="experiment-detail" class="hidden border border-slate-200 rounded-lg p-4 bg-slate-50">
-                    <h3 id="detail-title" class="font-semibold text-slate-900 mb-2"></h3>
-                    <pre id="detail-content" class="text-xs font-mono bg-white p-3 rounded border border-slate-200 overflow-x-auto"></pre>
+                <!-- Experiment Detail Inspector -->
+                <div x-show="selectedExperiment" x-cloak class="border border-slate-200 rounded-lg p-5 bg-slate-50 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <h3 class="font-semibold text-slate-900 text-base" x-text="'Dettaglio Esperimento: ' + (selectedExperiment?.experiment_name || selectedExperiment?.id)"></h3>
+                        <button @click="selectedExperiment = null" class="text-xs text-slate-500 hover:text-slate-800">Chiudi</button>
+                    </div>
+                    <pre class="bg-slate-900 text-slate-100 p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-[300px]" x-text="JSON.stringify(selectedExperiment, null, 2)"></pre>
                 </div>
             </div>
 
-            
-            <!-- FORGE: LoRA SPECIALIZATION -->
-            <div id="forge" class="section space-y-6">
+            <!-- 7. CONNETTORI API -->
+            <div x-show="tab === 'connectors'" x-cloak class="space-y-6">
                 <div>
-                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">La Forgia (LoRA)</h2>
-                    <p class="text-sm text-slate-500 mt-1">Specializza i modelli base per task specifici generando dataset sintetici ed eseguendo il fine-tuning.</p>
-                </div>
-                
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div class="space-y-4 bg-slate-50 p-5 border border-slate-200 rounded-lg">
-                        <div>
-                            <label class="block text-xs font-medium text-slate-700 mb-1">Nome Esperimento</label>
-                            <input type="text" id="forge-name" placeholder="es. Code_Ninja_v1" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-700 mb-1">Modello di Base</label>
-                            <select id="forge-model" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
-                                <option value="openai-community/gpt2">GPT-2 (Rapido, 124M)</option>
-                                <option value="Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Consigliato)</option>
-                                <option value="Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Pesante)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-700 mb-1">Argomento/Topic per Dataset</label>
-                            <textarea id="forge-topic" rows="3" placeholder="es. Insegnare a programmare in Python focalizzandosi sulle List Comprehensions" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"></textarea>
-                        </div>
-                        
-                        <div class="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200">
-                            <div>
-                                <label for="forge-qlora" class="text-xs font-semibold text-slate-900 block cursor-pointer">Attiva QLoRA (4-bit NF4)</label>
-                                <span class="text-[11px] text-slate-500 block">Riduce l'uso di RAM fino al 75% comprimendo i pesi base. Ideale per M1.</span>
-                            </div>
-                            <input type="checkbox" id="forge-qlora" checked class="w-4 h-4 text-slate-900 rounded border-slate-300 focus:ring-slate-900 cursor-pointer">
-                        </div>
-                        
-                        <button id="btn-forge-start" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2.5 rounded-lg transition-colors shadow-sm">
-                            Genera Dati & Addestra (Forgia)
-                        </button>
-                    </div>
-                    
-                    <div class="flex flex-col space-y-3">
-                        <div>
-                            <div class="flex justify-between text-xs font-medium text-slate-700 mb-1">
-                                <span>Avanzamento Addestramento</span>
-                                <span id="forge-progress-text">0%</span>
-                            </div>
-                            <div class="w-full bg-slate-200 rounded-full h-2">
-                                <div id="forge-progress-bar" class="bg-slate-900 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
-                            </div>
-                        </div>
-                        
-                        <div class="flex-1 bg-black rounded-lg border border-slate-800 p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[300px]" id="forge-terminal">
-                            > Forgia pronta. Inserisci i parametri e clicca avvia...
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            
-            <!-- 5. CONNECTORS -->
-            <div id="connectors" class="section space-y-6">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Connettori (OpenAI Standard)</h2>
-                        <p class="text-sm text-slate-500 mt-1">Configura gli endpoint dei provider (Ollama, Groq, Gemini, ecc.) usando lo standard OpenAI.</p>
-                    </div>
+                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">Connettori (Standard OpenAI)</h2>
+                    <p class="text-sm text-slate-500 mt-1">Configura gli endpoint dei provider locali o cloud (Ollama, Groq, vLLM, ecc.).</p>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- List of Connectors -->
-                    <div class="space-y-4" id="connectors-list">
-                        <!-- Populated via JS -->
+                    <!-- List -->
+                    <div class="space-y-3">
+                        <template x-for="conn in connectors" :key="conn.id">
+                            <div class="border border-slate-200 rounded-lg p-4 bg-white flex justify-between items-center shadow-xs">
+                                <div>
+                                    <h4 class="text-sm font-semibold text-slate-900" x-text="conn.name"></h4>
+                                    <div class="text-xs text-slate-500 mt-1 font-mono" x-text="conn.base_url"></div>
+                                </div>
+                                <button @click="deleteConnector(conn.id)" class="text-xs text-rose-600 hover:text-rose-800 font-medium">Rimuovi</button>
+                            </div>
+                        </template>
+                        <div x-show="connectors.length === 0" class="text-xs text-slate-400 p-4 border border-dashed rounded-lg text-center">
+                            Nessun connettore configurato.
+                        </div>
                     </div>
 
-                    <!-- Add / Edit Form -->
-                    <div class="bg-slate-50 p-5 rounded-lg border border-slate-200 h-fit space-y-4">
-                        <h3 class="text-sm font-medium text-slate-900" id="connector-form-title">Nuovo Connettore</h3>
+                    <!-- New Connector Form -->
+                    <div class="bg-slate-50 p-5 rounded-lg border border-slate-200 space-y-4">
+                        <h3 class="text-sm font-semibold text-slate-900">Aggiungi Connettore</h3>
                         <div>
                             <label class="block text-xs font-medium text-slate-700 mb-1">ID (es. ollama_local)</label>
-                            <input type="text" id="conn-id" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                            <input type="text" x-model="newConn.id" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-slate-700 mb-1">Nome Visivo (es. Ollama 3.1)</label>
-                            <input type="text" id="conn-name" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                            <label class="block text-xs font-medium text-slate-700 mb-1">Nome Visivo (es. Ollama Local)</label>
+                            <input type="text" x-model="newConn.name" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-slate-700 mb-1">Base URL (Standard OpenAI)</label>
-                            <input type="text" id="conn-url" placeholder="http://127.0.0.1:11434/v1" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                            <label class="block text-xs font-medium text-slate-700 mb-1">Base URL (Compatibile OpenAI)</label>
+                            <input type="text" x-model="newConn.base_url" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-slate-700 mb-1">API Key (Salvata in Portachiavi)</label>
-                            <input type="password" id="conn-key" placeholder="opzionale per modelli locali" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                            <label class="block text-xs font-medium text-slate-700 mb-1">API Key (Opzionale)</label>
+                            <input type="password" x-model="newConn.api_key" placeholder="opzionale per Ollama" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
                         </div>
-                        <div class="pt-2">
-                            <button id="btn-save-connector" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2 rounded-lg transition-colors">
-                                Salva Connettore
-                            </button>
-                        </div>
-                        <div id="connector-msg" class="text-xs font-medium text-center"></div>
-                    </div>
-                </div>
-            </div>
-
-        
-            <!-- MERGE LAB -->
-            <div id="merge-lab" class="section space-y-6 hidden">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <h1 class="text-2xl font-bold text-slate-900">Model Merge Lab</h1>
-                        <p class="text-slate-500 mt-1">Unisci modelli classici o fondi adattatori LoRA nei modelli base.</p>
-                    </div>
-                </div>
-                
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Modello A (Base/Target)</label>
-                            <select id="merge-model-a" class="w-full bg-slate-50 border border-slate-200 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"></select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Modello B (Adapter/Source)</label>
-                            <select id="merge-model-b" class="w-full bg-slate-50 border border-slate-200 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"></select>
-                        </div>
-                    </div>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Strategia di Merge</label>
-                            <select id="merge-strategy" class="w-full bg-slate-50 border border-slate-200 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5">
-                                <option value="lora_merge">LoRA Merge (LLM: Adapter into Base)</option>
-                                <option value="slerp">SLERP (Spherical Linear Interpolation - CNN/MLP)</option>
-                                <option value="dare_linear">DARE (Drop And Rescale Delta - CNN/MLP)</option>
-                                <option value="linear_weight">Linear Interpolation (CNN/MLP)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <div class="flex justify-between items-center mb-2">
-                                <label class="text-sm font-medium text-slate-700">Peso Interpolazione (Alpha)</label>
-                                <span id="alpha-val" class="text-xs font-mono font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">0.50</span>
-                            </div>
-                            <input type="range" id="merge-alpha" min="0" max="1" step="0.05" value="0.5" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 mt-2">
-                            <div class="flex justify-between text-[11px] text-slate-400 mt-1">
-                                <span>100% Modello A</span>
-                                <span>50/50 Equo</span>
-                                <span>100% Modello B</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="mt-6 flex flex-wrap gap-4">
-                        <button id="btn-preflight" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
-                            Verifica Compatibilità
+                        <button @click="saveConnector()" 
+                                :disabled="isSavingConn"
+                                class="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-medium text-sm px-4 py-2 rounded-lg transition-colors">
+                            Salva Connettore
                         </button>
-                        <button id="btn-execute-merge" disabled class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                            Esegui Merge
-                        </button>
-                    </div>
-                    
-                    <div id="merge-preflight-results" class="mt-6 hidden p-4 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-700">
-                    </div>
-
-                    <!-- Post-Merge Action Toolbar -->
-                    <div id="merge-post-actions" class="mt-6 hidden p-5 rounded-lg bg-emerald-50 border border-emerald-200">
-                        <div class="flex items-center space-x-2 text-emerald-800 font-semibold mb-2">
-                            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                            <span>Nuovo Modello Creato con Successo</span>
-                        </div>
-                        <p class="text-xs text-emerald-700 mb-4">Puoi validare scientificamente le metriche numeriche contro regressioni o esportarlo in 1-clic in Ollama.</p>
-                        <div class="flex flex-wrap gap-3">
-                            <button id="btn-run-eval" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors">
-                                📊 Calcola Perplexity / Accuratezza
-                            </button>
-                            <button id="btn-export-ollama" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors">
-                                🦙 Esporta Modelfile (Ollama)
-                            </button>
-                        </div>
-                        <div id="eval-status-box" class="mt-3 text-xs font-mono hidden"></div>
+                        <div x-show="connMsg" class="text-xs text-center font-medium text-emerald-600" x-text="connMsg"></div>
                     </div>
                 </div>
             </div>
@@ -466,7 +546,8 @@
         </main>
     </div>
 
-    <script src="/static/app.js?v=3.0"></script>
+    <!-- Application Script -->
+    <script src="/static/app.js?v=4.0"></script>
     
 </body>
 </html>

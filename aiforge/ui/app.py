@@ -293,6 +293,7 @@ class ForgeRequest(BaseModel):
     name: str
     model: str
     topic: str
+    qlora: bool = False
 
 @app.post("/api/forge/start")
 async def start_forge(req: ForgeRequest):
@@ -304,6 +305,8 @@ async def start_forge(req: ForgeRequest):
             "--model", req.model,
             "--topic", req.topic
         ]
+        if req.qlora:
+            cmd.append("--qlora")
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

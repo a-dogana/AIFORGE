@@ -327,11 +327,14 @@ document.addEventListener("DOMContentLoaded", () => {
             progressTxt.textContent = '0%';
             term.innerHTML = '';
             
+            const qloraEl = document.getElementById('forge-qlora');
+            const qlora = qloraEl ? qloraEl.checked : false;
+
             try {
                 const res = await fetch('/api/forge/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, model, topic })
+                    body: JSON.stringify({ name, model, topic, qlora })
                 });
 
                 if (!res.ok) {

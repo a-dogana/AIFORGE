@@ -53,6 +53,11 @@ class LLMConfig(BaseModel):
     lora_r: int = Field(8)
     lora_alpha: int = Field(16)
     lora_dropout: float = Field(0.05)
+    qlora: bool = Field(False, description="Enable 4-bit NF4 Quantized LoRA")
+    quantization_bits: int = Field(4, description="Bit width for quantization: 4 or 8")
+    quantization_type: str = Field("nf4", description="Quantization codebook: 'nf4' (NormalFloat4) or 'fp4'")
+    double_quant: bool = Field(True, description="Enable nested block-level scaling")
+    compute_dtype: str = Field("float16", description="Compute precision for LoRA adapters")
 
 class ArchitectureConfig(BaseModel):
     type: str = Field(..., description="Type of architecture: 'mlp', 'cnn', 'llm'.")

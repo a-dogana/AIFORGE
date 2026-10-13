@@ -401,6 +401,10 @@ def run_llm_train(args):
         print("Config architecture must be 'llm' for this command.")
         sys.exit(1)
         
+    if getattr(args, "qlora", False):
+        config.architecture.llm_config.qlora = True
+        config.architecture.llm_config.lora_enabled = True
+        
     if config.backend == "soup":
         print("\n--- Using Soup Backend ---")
         from aiforge.llm.backends.soup import SoupBackend
@@ -592,6 +596,7 @@ def main():
     parser_llm = subparsers.add_parser("llm-train", help="Run an LLM Fine-Tuning experiment")
     parser_llm.add_argument("--config", type=str, required=True, help="Path to the YAML configuration file")
     parser_llm.add_argument("--dataset", type=str, required=True, help="Path to JSONL dataset")
+    parser_llm.add_argument("--qlora", action="store_true", help="Enable 4-bit NF4 Quantized LoRA (QLoRA)")
     parser_llm.set_defaults(func=run_llm_train)
     
     # serve-llm command

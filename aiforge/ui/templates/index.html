@@ -309,6 +309,14 @@
                             <textarea id="forge-topic" rows="3" placeholder="es. Insegnare a programmare in Python focalizzandosi sulle List Comprehensions" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"></textarea>
                         </div>
                         
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200">
+                            <div>
+                                <label for="forge-qlora" class="text-xs font-semibold text-slate-900 block cursor-pointer">Attiva QLoRA (4-bit NF4)</label>
+                                <span class="text-[11px] text-slate-500 block">Riduce l'uso di RAM fino al 75% comprimendo i pesi base. Ideale per M1.</span>
+                            </div>
+                            <input type="checkbox" id="forge-qlora" checked class="w-4 h-4 text-slate-900 rounded border-slate-300 focus:ring-slate-900 cursor-pointer">
+                        </div>
+                        
                         <button id="btn-forge-start" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2.5 rounded-lg transition-colors shadow-sm">
                             Genera Dati & Addestra (Forgia)
                         </button>

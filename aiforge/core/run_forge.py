@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--name", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--topic", required=True)
+    parser.add_argument("--qlora", action="store_true", default=False, help="Enable 4-bit NF4 QLoRA quantization")
     args = parser.parse_args()
 
     print(f"=== FORGE TRAINING PIPELINE: {args.name} ===", flush=True)
@@ -108,6 +109,7 @@ Struttura:
                 "model_id": args.model,
                 "allow_download": True,
                 "lora_enabled": True,
+                "qlora": args.qlora,
                 "lora_r": 8,
                 "lora_alpha": 16,
                 "lora_dropout": 0.05
@@ -121,7 +123,7 @@ Struttura:
         backend_args={
             "soup_env_path": soup_env,
             "chat_template": "chatml",
-            "quantization": "none"
+            "quantization": "4bit" if args.qlora else "none"
         }
     )
 

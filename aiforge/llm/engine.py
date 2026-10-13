@@ -42,28 +42,114 @@ class LLMEngine:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        print(f"Loading LLM model from {model_id}...")
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            local_files_only=not self.llm_config.allow_download,
-            trust_remote_code=trust_remote,
-            device_map=self.device
-        )
+        is_qlora = getattr(self.llm_config, "qlora", False)
         
-        if self.llm_config.lora_enabled and not local_path:
-            # Only inject LoRA if it's a fresh base model load
-            from peft import get_peft_model, LoraConfig, TaskType
-            
-            print(f"Injecting LoRA adapters (r={self.llm_config.lora_r}, alpha={self.llm_config.lora_alpha})...")
-            peft_config = LoraConfig(
-                task_type=TaskType.CAUSAL_LM, 
-                inference_mode=False, 
-                r=self.llm_config.lora_r, 
-                lora_alpha=self.llm_config.lora_alpha, 
-                lora_dropout=self.llm_config.lora_dropout
+        # Check for QLoRA adapter in local_path
+        qlora_weights_path = os.path.join(local_path, "qlora_adapter.pt") if local_path and os.path.exists(os.path.join(local_path, "qlora_adapter.pt")) else None
+
+        if is_qlora and not local_path:
+            # Check if bitsandbytes is available on CUDA
+            has_bnb = False
+            try:
+                import bitsandbytes as bnb
+                has_bnb = True
+            except ImportError:
+                has_bnb = False
+
+            if has_bnb and self.device == "cuda":
+                from transformers import BitsAndBytesConfig
+                from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
+                
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type=getattr(self.llm_config, "quantization_type", "nf4"),
+                    bnb_4bit_use_double_quant=getattr(self.llm_config, "double_quant", True),
+                    bnb_4bit_compute_dtype=torch.float16
+                )
+                print(f"Loading LLM model with hardware 4-bit bitsandbytes...")
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    quantization_config=bnb_config,
+                    local_files_only=not self.llm_config.allow_download,
+                    trust_remote_code=trust_remote,
+                    device_map="auto"
+                )
+                self.model = prepare_model_for_kbit_training(self.model)
+                peft_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM,
+                    r=self.llm_config.lora_r,
+                    lora_alpha=self.llm_config.lora_alpha,
+                    lora_dropout=self.llm_config.lora_dropout
+                )
+                self.model = get_peft_model(self.model, peft_config)
+                self.model.print_trainable_parameters()
+            else:
+                # Native AIFORGE NF4-QLoRA Engine (Optimized for Apple Silicon MPS & CPU)
+                from aiforge.llm.qlora import apply_qlora_to_model
+                print(f"Applying Native AIFORGE 4-bit NF4 QLoRA on {self.device}...")
+                dtype = torch.float16 if self.device == "mps" else torch.float32
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    local_files_only=not self.llm_config.allow_download,
+                    trust_remote_code=trust_remote,
+                    torch_dtype=dtype
+                )
+                stats = apply_qlora_to_model(
+                    self.model,
+                    lora_r=self.llm_config.lora_r,
+                    lora_alpha=self.llm_config.lora_alpha,
+                    lora_dropout=self.llm_config.lora_dropout,
+                    quant_type=getattr(self.llm_config, "quantization_type", "nf4")
+                )
+                print(f"QLoRA Active: {stats['replaced_layers']} layers converted to 4-bit NF4. Trainable params: {stats['trainable_params']} ({stats['trainable_percentage']:.2f}%).")
+        elif qlora_weights_path:
+            # Loading saved native QLoRA adapter
+            from aiforge.llm.qlora import apply_qlora_to_model, load_qlora_state_dict
+            cfg_path = os.path.join(local_path, "qlora_config.json")
+            cfg_data = {}
+            if os.path.exists(cfg_path):
+                with open(cfg_path) as f:
+                    cfg_data = json.load(f)
+            base_id = cfg_data.get("model_id", self.llm_config.model_id)
+            print(f"Loading base model {base_id} for QLoRA adapter...")
+            dtype = torch.float16 if self.device == "mps" else torch.float32
+            self.model = AutoModelForCausalLM.from_pretrained(
+                base_id,
+                local_files_only=not self.llm_config.allow_download,
+                trust_remote_code=trust_remote,
+                torch_dtype=dtype
             )
-            self.model = get_peft_model(self.model, peft_config)
-            self.model.print_trainable_parameters()
+            apply_qlora_to_model(
+                self.model,
+                lora_r=cfg_data.get("lora_r", self.llm_config.lora_r),
+                lora_alpha=cfg_data.get("lora_alpha", self.llm_config.lora_alpha),
+                lora_dropout=cfg_data.get("lora_dropout", self.llm_config.lora_dropout),
+                quant_type=cfg_data.get("quant_type", "nf4")
+            )
+            adapter_weights = torch.load(qlora_weights_path, map_location="cpu", weights_only=True)
+            loaded = load_qlora_state_dict(self.model, adapter_weights)
+            print(f"Loaded {loaded} QLoRA adapter layers from {local_path}.")
+        else:
+            print(f"Loading LLM model from {model_id}...")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                local_files_only=not self.llm_config.allow_download,
+                trust_remote_code=trust_remote,
+                device_map=self.device
+            )
+            
+            if self.llm_config.lora_enabled and not local_path:
+                from peft import get_peft_model, LoraConfig, TaskType
+                print(f"Injecting LoRA adapters (r={self.llm_config.lora_r}, alpha={self.llm_config.lora_alpha})...")
+                peft_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM, 
+                    inference_mode=False, 
+                    r=self.llm_config.lora_r, 
+                    lora_alpha=self.llm_config.lora_alpha, 
+                    lora_dropout=self.llm_config.lora_dropout
+                )
+                self.model = get_peft_model(self.model, peft_config)
+                self.model.print_trainable_parameters()
             
         self.model.to(self.device)
 
@@ -86,8 +172,8 @@ class LLMEngine:
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     def train(self, dataset_path: str):
-        if not self.llm_config.lora_enabled:
-            raise ValueError("Training requires LoRA to be enabled to protect base weights.")
+        if not (self.llm_config.lora_enabled or getattr(self.llm_config, "qlora", False)):
+            raise ValueError("Training requires LoRA or QLoRA to be enabled to protect base weights.")
             
         import math
         import time
@@ -274,9 +360,33 @@ class LLMEngine:
         return metrics
 
     def save_adapters(self, save_dir: str):
-        if not self.llm_config.lora_enabled:
-            raise ValueError("Only LoRA adapters can be saved in this mode.")
+        is_qlora = getattr(self.llm_config, "qlora", False)
+        if not (self.llm_config.lora_enabled or is_qlora):
+            raise ValueError("Only LoRA or QLoRA adapters can be saved in this mode.")
         os.makedirs(save_dir, exist_ok=True)
-        self.model.save_pretrained(save_dir)
+        
+        if is_qlora:
+            from aiforge.llm.qlora import extract_qlora_state_dict
+            qlora_state = extract_qlora_state_dict(self.model)
+            if qlora_state:
+                torch.save(qlora_state, os.path.join(save_dir, "qlora_adapter.pt"))
+                cfg_path = os.path.join(save_dir, "qlora_config.json")
+                with open(cfg_path, "w") as f:
+                    json.dump({
+                        "model_id": self.llm_config.model_id,
+                        "lora_r": self.llm_config.lora_r,
+                        "lora_alpha": self.llm_config.lora_alpha,
+                        "lora_dropout": self.llm_config.lora_dropout,
+                        "quant_type": getattr(self.llm_config, "quantization_type", "nf4"),
+                        "qlora": True
+                    }, f, indent=2)
+                print(f"Saved native QLoRA adapters to {save_dir}")
+        
+        if hasattr(self.model, "save_pretrained"):
+            try:
+                self.model.save_pretrained(save_dir)
+            except Exception:
+                pass
+                
         self.tokenizer.save_pretrained(save_dir)
-        print(f"Saved LoRA adapters to {save_dir}")
+        print(f"Saved tokenizer and adapters to {save_dir}")

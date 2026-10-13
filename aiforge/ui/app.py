@@ -294,6 +294,8 @@ class ForgeRequest(BaseModel):
     model: str
     topic: str
     qlora: bool = False
+    method: str = "quick"
+    target_samples: int = 100
 
 @app.post("/api/forge/start")
 async def start_forge(req: ForgeRequest):
@@ -303,7 +305,9 @@ async def start_forge(req: ForgeRequest):
             "-m", "aiforge.core.run_forge",
             "--name", req.name,
             "--model", req.model,
-            "--topic", req.topic
+            "--topic", req.topic,
+            "--method", req.method,
+            "--target-samples", str(req.target_samples)
         ]
         if req.qlora:
             cmd.append("--qlora")

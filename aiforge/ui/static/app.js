@@ -49,10 +49,12 @@ function aiforgeApp() {
             name: '',
             model: 'Qwen/Qwen2.5-Coder-0.5B-Instruct',
             topic: '',
+            method: 'lima',
+            targetSamples: 100,
             qlora: true,
             isRunning: false,
             progress: '0%',
-            terminalLogs: ['> Forgia pronta. Inserisci i parametri e clicca avvia...']
+            terminalLogs: ['> Forgia pronta. Seleziona la metodologia (LIMA o Rapido) e avvia...']
         },
 
         // Connectors
@@ -369,7 +371,9 @@ function aiforgeApp() {
                         name: this.forge.name,
                         model: this.forge.model,
                         topic: this.forge.topic,
-                        qlora: this.forge.qlora
+                        qlora: this.forge.qlora,
+                        method: this.forge.method,
+                        target_samples: parseInt(this.forge.targetSamples) || 100
                     })
                 });
 

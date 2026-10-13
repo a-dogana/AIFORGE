@@ -401,6 +401,24 @@ def run_llm_train(args):
         print("Config architecture must be 'llm' for this command.")
         sys.exit(1)
         
+    if config.backend == "soup":
+        print("\n--- Using Soup Backend ---")
+        from aiforge.llm.backends.soup import SoupBackend
+        from aiforge.experiments.registry import ExperimentRegistry
+        
+        try:
+            backend = SoupBackend(config)
+            res = backend.train(args.dataset)
+            
+            print("Saving Soup results to registry...")
+            registry = ExperimentRegistry()
+            registry.save_experiment(config, res, {}, device_used="soup_env")
+            print("\nSoup Training completed successfully.")
+            return
+        except Exception as e:
+            print(f"Soup Backend Error: {e}")
+            sys.exit(1)
+            
     from aiforge.llm.engine import LLMEngine
     engine = LLMEngine(config)
     
@@ -434,6 +452,66 @@ def run_serve_llm(args):
     from aiforge.serving.llm_server import run_llm_server
     run_llm_server(args.config, adapter_dir=args.adapter, host=args.host, port=args.port)
 
+def run_ui(args):
+    """Start the local Web Dashboard."""
+    import uvicorn
+    print(f"Starting AIFORGE Web Dashboard on http://{args.host}:{args.port}")
+    uvicorn.run("aiforge.ui.app:app", host=args.host, port=args.port, log_level="info")
+
+def run_merge(args):
+    from aiforge.core.merge_lab import MergeLab, MergeRequest
+    from aiforge.experiments.registry import ExperimentRegistry
+    import sys
+    
+    registry = ExperimentRegistry()
+    lab = MergeLab(registry)
+    req = MergeRequest(strategy=args.strategy, model_a_id=args.model_a, model_b_id=args.model_b, alpha=getattr(args, 'alpha', 0.5), output_name=args.output)
+    
+    print(f"=== AIFORGE: Model Merge Lab ===")
+    print(f"Strategy: {args.strategy}")
+    print(f"Preflight validation...")
+    
+    val = lab.validate_pre_merge(req)
+    if val["status"] == "INCOMPATIBLE":
+        print(f"ERROR: Merge incompatible -> {val['incompatibilities']}")
+        sys.exit(1)
+        
+    print(f"Status: {val['status']}")
+    if val.get("warnings"):
+        print("WARNINGS:")
+        for w in val["warnings"]: print(f" - {w}")
+        
+    print(f"Estimated RAM: {val.get('estimated_ram_mb', 0)} MB")
+    
+    confirm = input("Execute merge? (y/n): ")
+    if confirm.lower() != 'y':
+        print("Aborted.")
+        sys.exit(0)
+        
+    print("Executing merge...")
+    try:
+        out_id = lab.execute_merge(req)
+        print(f"Merge successful! Saved as artifact ID: {out_id}")
+    except Exception as e:
+        print(f"Merge failed: {e}")
+        sys.exit(1)
+
+
+def run_export_ollama(args):
+    from aiforge.deployment.ollama_export import OllamaExporter
+    from aiforge.experiments.registry import ExperimentRegistry
+    reg = ExperimentRegistry()
+    exporter = OllamaExporter(reg)
+    try:
+        res = exporter.export(args.id, ollama_model_name=args.name, system_prompt=args.system)
+        print(f"Ollama Modelfile created: {res['modelfile_path']}")
+        print(f"Execute in terminal to load: {res['create_command']}")
+    except Exception as e:
+        print(f"Ollama export failed: {e}")
+        import sys
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="AIFORGE CLI: Autonomous AI Laboratory")
     subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
@@ -449,7 +527,22 @@ def main():
     parser_tune.add_argument("--evaluate-best", action="store_true", help="Train and evaluate the best configuration at the end")
     parser_tune.set_defaults(func=run_tuning)
     
-    # list command
+    # merge command (v1.6)
+    parser_merge = subparsers.add_parser("merge", help="Run Model Merge Lab to merge adapters or weights")
+    parser_merge.add_argument("--strategy", type=str, choices=["lora_merge", "multi_lora_merge", "linear_weight", "slerp", "dare_linear"], default="lora_merge", help="Merge strategy")
+    parser_merge.add_argument("--model-a", type=str, required=True, help="Registry ID of model A (Base/Target)")
+    parser_merge.add_argument("--model-b", type=str, required=True, help="Registry ID of model B (Adapter/Source)")
+    parser_merge.add_argument("--alpha", type=float, default=0.5, help="Interpolation weight alpha (0.0 to 1.0)")
+    parser_merge.add_argument("--output", type=str, default="Merged_CLI", help="Output artifact name")
+    parser_merge.set_defaults(func=run_merge)
+
+    # export-ollama command
+    parser_ollama = subparsers.add_parser("export-ollama", help="Export an LLM model to Ollama Modelfile")
+    parser_ollama.add_argument("id", type=str, help="Experiment ID to export")
+    parser_ollama.add_argument("--name", type=str, default=None, help="Custom Ollama model name")
+    parser_ollama.add_argument("--system", type=str, default=None, help="Custom system prompt")
+    parser_ollama.set_defaults(func=run_export_ollama)
+
     parser_list = subparsers.add_parser("list", help="List all registered experiments")
     parser_list.set_defaults(func=list_experiments)
     
@@ -508,6 +601,12 @@ def main():
     parser_serve_llm.add_argument("--host", type=str, default="127.0.0.1", help="Host interface to bind to")
     parser_serve_llm.add_argument("--port", type=int, default=8000, help="Port to listen on")
     parser_serve_llm.set_defaults(func=run_serve_llm)
+    
+    # ui command
+    parser_ui = subparsers.add_parser("ui", help="Start the local Web Dashboard")
+    parser_ui.add_argument("--host", type=str, default="127.0.0.1", help="Host interface to bind to")
+    parser_ui.add_argument("--port", type=int, default=8500, help="Port to listen on")
+    parser_ui.set_defaults(func=run_ui)
     
     args = parser.parse_args()
     args.func(args)

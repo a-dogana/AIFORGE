@@ -9,6 +9,7 @@ from aiforge.core.config import ExperimentConfig
 class ExperimentRegistry:
     def __init__(self, registry_dir: str = "registry"):
         self.registry_dir = registry_dir
+        self.registry_path = registry_dir
         os.makedirs(self.registry_dir, exist_ok=True)
         self.checkpoints_dir = os.path.join(registry_dir, "checkpoints")
         os.makedirs(self.checkpoints_dir, exist_ok=True)
@@ -22,6 +23,8 @@ class ExperimentRegistry:
             preprocessing_artifacts = {}
         if not experiment_id:
             experiment_id = str(uuid.uuid4())[:8]
+        else:
+            experiment_id = self._validate_id(experiment_id)
             
         timestamp = datetime.datetime.now().isoformat()
         
@@ -103,11 +106,34 @@ class ExperimentRegistry:
             raise FileNotFoundError(f"Best model checkpoint file not found at expected path: {checkpoint_path}")
                 
         return record, model_state
+    def _validate_id(self, experiment_id: str) -> str:
+        if not experiment_id or not isinstance(experiment_id, str):
+            raise ValueError("Experiment ID must be a non-empty string.")
+        if ".." in experiment_id or "/" in experiment_id or "\\" in experiment_id:
+            raise ValueError(f"Security: Path traversal detected in experiment ID: '{experiment_id}'")
+        return experiment_id
+
+    def save_experiment_record(self, experiment_id: str, record: Dict[str, Any]):
+        experiment_id = self._validate_id(experiment_id)
+        file_path = os.path.join(self.registry_dir, f"exp_{experiment_id}.json")
+        with open(file_path, "w") as f:
+            json.dump(record, f, indent=4)
+
+    def get_experiment_record(self, experiment_id: str) -> Dict[str, Any]:
+        """Loads only the JSON record without the weights."""
+        experiment_id = self._validate_id(experiment_id)
+        file_path = os.path.join(self.registry_dir, f"exp_{experiment_id}.json")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Experiment record not found for ID: {experiment_id}")
+            
+        with open(file_path, "r") as f:
+            return json.load(f)
         
     def load_training_state(self, experiment_id: str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """
         Loads the experiment record and the FULL training state for resuming.
         """
+        experiment_id = self._validate_id(experiment_id)
         file_path = os.path.join(self.registry_dir, f"exp_{experiment_id}.json")
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Experiment record not found for ID: {experiment_id}")

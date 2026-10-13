@@ -96,6 +96,8 @@ class ExperimentConfig(BaseModel):
     learning_rate: float = Field(0.001, description="Learning rate for the optimizer.")
     device: str = Field("auto", description="Device to use for training: 'auto', 'cpu', 'mps', or 'cuda'.")
     seed: Optional[int] = Field(42, description="Random seed for reproducibility.")
+    backend: str = Field("native", description="Training backend to use: 'native' or 'soup'.")
+    backend_args: Dict[str, Any] = Field(default_factory=dict, description="Additional arguments for the backend.")
     
     early_stopping: EarlyStoppingConfig = Field(default_factory=EarlyStoppingConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)

@@ -1,7 +1,15 @@
 venv/
+venv_clean/
+venv_rc1/
 .pytest_cache/
 __pycache__/
 *.pyc
 deploy_*
 registry/
+build/
+dist/
+*.egg-info/
+models/
+debug_soup_out/
+*.log
 

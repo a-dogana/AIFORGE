@@ -108,9 +108,15 @@ class LLMEngine:
         val_size = max(1, int(0.1 * len(dataset)))
         
         train_ds = dataset.select(range(train_size))
-        val_ds = dataset.select(range(train_size, train_size + val_size))
-        test_ds = dataset.select(range(train_size + val_size, len(dataset)))
+        val_ds = dataset.select(range(train_size, min(len(dataset), train_size + val_size)))
         
+        test_start = train_size + val_size
+        if test_start < len(dataset):
+            test_ds = dataset.select(range(test_start, len(dataset)))
+        else:
+            # Fallback for tiny datasets
+            test_ds = dataset.select(range(0))
+            
         print(f"Dataset splits: Train={len(train_ds)}, Val={len(val_ds)}, Test={len(test_ds)}")
         
         def tokenize_and_mask(example):

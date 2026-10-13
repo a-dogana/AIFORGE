@@ -3,3 +3,18 @@
 {"instruction": "Multiply two numbers", "input": "", "output": "def mul(a, b):\n    return a * b"}
 {"instruction": "Divide two numbers", "input": "", "output": "def div(a, b):\n    return a / b"}
 {"instruction": "Modulo two numbers", "input": "", "output": "def mod(a, b):\n    return a % b"}
+{"instruction": "Task 1", "input": "", "output": "def t1(): return 1"}
+{"instruction": "Task 2", "input": "", "output": "def t2(): return 2"}
+{"instruction": "Task 3", "input": "", "output": "def t3(): return 3"}
+{"instruction": "Task 4", "input": "", "output": "def t4(): return 4"}
+{"instruction": "Task 5", "input": "", "output": "def t5(): return 5"}
+{"instruction": "Task 6", "input": "", "output": "def t6(): return 6"}
+{"instruction": "Task 7", "input": "", "output": "def t7(): return 7"}
+{"instruction": "Task 8", "input": "", "output": "def t8(): return 8"}
+{"instruction": "Task 9", "input": "", "output": "def t9(): return 9"}
+{"instruction": "Task 10", "input": "", "output": "def t10(): return 10"}
+{"instruction": "Task 11", "input": "", "output": "def t11(): return 11"}
+{"instruction": "Task 12", "input": "", "output": "def t12(): return 12"}
+{"instruction": "Task 13", "input": "", "output": "def t13(): return 13"}
+{"instruction": "Task 14", "input": "", "output": "def t14(): return 14"}
+{"instruction": "Task 15", "input": "", "output": "def t15(): return 15"}

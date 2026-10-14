@@ -59,35 +59,80 @@ class LIMAQualityFilter:
         malformed_count = 0
 
         for item in samples:
-            instruction = (item.get("instruction") or "").strip()
-            output = (item.get("output") or "").strip()
+            if "messages" in item or "turns" in item:
+                # Multi-turn conversational sample
+                msgs = item.get("messages") or item.get("turns") or []
+                if not isinstance(msgs, list) or len(msgs) < 2:
+                    malformed_count += 1
+                    continue
 
-            if not instruction or not output:
-                malformed_count += 1
-                continue
+                is_valid = True
+                user_first = ""
+                total_assistant_len = 0
+                for turn in msgs:
+                    if not isinstance(turn, dict) or not turn.get("content"):
+                        is_valid = False
+                        break
+                    role = turn.get("role", "")
+                    content = str(turn.get("content", "")).strip()
+                    if role == "user" and not user_first:
+                        user_first = content
+                    if role == "assistant":
+                        total_assistant_len += len(content)
 
-            if len(output) < min_output_len:
-                too_short_count += 1
-                continue
+                if not is_valid or not user_first:
+                    malformed_count += 1
+                    continue
 
-            # Check near-duplicate against already accepted instructions
-            is_duplicate = False
-            for prev_inst in seen_instructions:
-                sim = cls.jaccard_similarity(instruction, prev_inst)
-                if sim >= max_similarity_threshold:
-                    is_duplicate = True
-                    break
+                if total_assistant_len < min_output_len:
+                    too_short_count += 1
+                    continue
 
-            if is_duplicate:
-                duplicates_count += 1
-                continue
+                # Check duplicate against previous prompts
+                is_duplicate = False
+                for prev_inst in seen_instructions:
+                    sim = cls.jaccard_similarity(user_first, prev_inst)
+                    if sim >= max_similarity_threshold:
+                        is_duplicate = True
+                        break
 
-            accepted.append({
-                "instruction": instruction,
-                "input": (item.get("input") or "").strip(),
-                "output": output
-            })
-            seen_instructions.append(instruction)
+                if is_duplicate:
+                    duplicates_count += 1
+                    continue
+
+                accepted.append(item)
+                seen_instructions.append(user_first)
+            else:
+                # Single-turn instruction sample
+                instruction = (item.get("instruction") or "").strip()
+                output = (item.get("output") or "").strip()
+
+                if not instruction or not output:
+                    malformed_count += 1
+                    continue
+
+                if len(output) < min_output_len:
+                    too_short_count += 1
+                    continue
+
+                # Check near-duplicate against already accepted instructions
+                is_duplicate = False
+                for prev_inst in seen_instructions:
+                    sim = cls.jaccard_similarity(instruction, prev_inst)
+                    if sim >= max_similarity_threshold:
+                        is_duplicate = True
+                        break
+
+                if is_duplicate:
+                    duplicates_count += 1
+                    continue
+
+                accepted.append({
+                    "instruction": instruction,
+                    "input": (item.get("input") or "").strip(),
+                    "output": output
+                })
+                seen_instructions.append(instruction)
 
         stats = {
             "total_input": len(samples),
@@ -182,7 +227,7 @@ class LIMAPipeline:
     def __init__(
         self,
         client: Any,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-3.8-flash",
         staging_dir: str = "datasets/staging",
         min_request_delay: float = 1.0,
         max_retries: int = 4
@@ -219,11 +264,30 @@ Rispondi ESCLUSIVAMENTE con un array JSON di stringhe. Esempio:
         # Fallback heuristic taxonomy if parsing fails
         return [f"{main_topic} - Modulo {i+1}" for i in range(target_subtopics)]
 
-    def generate_micro_batch(self, subtopic: str, count: int = 20) -> List[Dict[str, str]]:
+    def generate_micro_batch(self, subtopic: str, count: int = 20, turn_type: str = "single_turn") -> List[Dict[str, Any]]:
         """
         Step 2: Generates a small micro-batch of structured examples for a specific sub-topic.
+        Supports 'single_turn' (instruction/output) and 'multi_turn' (conversational dialogues).
         """
-        prompt = f"""Crea {count} esempi didattici avanzati di alta qualità secondo la metodologia LIMA (istruzione chiara, non ambigua, con risposta completa, approfondita e priva di errori) per il seguente sotto-argomento:
+        if turn_type == "multi_turn":
+            prompt = f"""Crea {count} conversazioni didattiche multi-turno di alta qualità per il seguente sotto-argomento:
+"{subtopic}"
+
+Ogni conversazione deve avere almeno 2 o 3 turni di interazione (domanda iniziale, risposta approfondita, domanda di follow-up o caso limite, e risposta finale con codice o dettagli tecnici).
+Rispondi ESCLUSIVAMENTE con un array JSON valido, senza markdown.
+Formato:
+[
+  {{
+    "messages": [
+      {{"role": "user", "content": "Domanda o problema iniziale"}},
+      {{"role": "assistant", "content": "Spiegazione esaustiva iniziale"}},
+      {{"role": "user", "content": "Approfondimento, corner-case o richiesta di ottimizzazione"}},
+      {{"role": "assistant", "content": "Soluzione finale avanzata e dettagliata"}}
+    ]
+  }}
+]"""
+        else:
+            prompt = f"""Crea {count} esempi didattici avanzati di alta qualità secondo la metodologia LIMA (istruzione chiara, non ambigua, con risposta completa, approfondita e priva di errori) per il seguente sotto-argomento:
 "{subtopic}"
 
 Rispondi ESCLUSIVAMENTE con un array JSON valido. Nessun markdown o testo introduttivo.
@@ -248,7 +312,11 @@ Formato:
             if isinstance(items, list):
                 valid = []
                 for it in items:
-                    if isinstance(it, dict) and "instruction" in it and "output" in it:
+                    if not isinstance(it, dict):
+                        continue
+                    if turn_type == "multi_turn" and ("messages" in it or "turns" in it):
+                        valid.append(it)
+                    elif turn_type != "multi_turn" and "instruction" in it and "output" in it:
                         valid.append(it)
                 return valid
         except Exception:
@@ -292,6 +360,7 @@ Formato:
         target_samples: int = 100,
         batch_size: int = 20,
         output_final_path: Optional[str] = None,
+        turn_type: str = "single_turn",
         progress_cb: Optional[Callable[[int, str], None]] = None
     ) -> Dict[str, Any]:
         """
@@ -328,7 +397,7 @@ Formato:
                 step_pct = int(25 + ((i + 1) / max(1, total_steps)) * 50)
                 report(step_pct, f"Generazione micro-batch ({i+1}/{total_steps}): {subtopic}...")
 
-                batch_items = self.generate_micro_batch(subtopic, count=batch_size)
+                batch_items = self.generate_micro_batch(subtopic, count=batch_size, turn_type=turn_type)
                 if batch_items:
                     self.staging.append_batch(job_id, subtopic, batch_items)
                     staged_samples.extend(batch_items)

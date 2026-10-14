@@ -92,3 +92,67 @@ def test_ui_api_generate_online(monkeypatch):
         assert res.status_code == 200
         assert "def mock():" in res.json()["text"]
 
+
+def test_ui_api_export_gguf(tmp_path, monkeypatch):
+    import aiforge.ui.app
+    from unittest.mock import MagicMock
+
+    mock_exporter = MagicMock()
+    mock_exporter.export.return_value = {
+        "status": "success",
+        "experiment_id": "test_exp",
+        "quantization": "Q4_K_M",
+        "target_gguf_path": "/fake/path/model.gguf"
+    }
+
+    monkeypatch.setattr("aiforge.deployment.gguf_export.GGUFExporter.export", mock_exporter.export)
+
+    with TestClient(aiforge.ui.app.app) as client:
+        res = client.post("/api/export/gguf", json={"experiment_id": "test_exp", "quantization": "Q4_K_M"})
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+        assert res.json()["quantization"] == "Q4_K_M"
+
+def test_ui_api_merge_preflight_post(monkeypatch):
+    import aiforge.ui.app
+    from aiforge.core.merge_lab import MergeLab
+    from unittest.mock import MagicMock
+    
+    mock_validate = MagicMock(return_value={"status": "COMPATIBLE", "estimated_ram_mb": 150, "warnings": [], "incompatibilities": []})
+    monkeypatch.setattr(MergeLab, "validate_pre_merge", mock_validate)
+    
+    with TestClient(aiforge.ui.app.app) as client:
+        res = client.post("/api/merge/preflight", json={
+            "strategy": "slerp",
+            "model_a_id": "BASE:openai-community/gpt2",
+            "model_b_id": "BASE:openai-community/gpt2",
+            "alpha": 0.5
+        })
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "COMPATIBLE"
+        assert data["estimated_ram_mb"] == 150
+
+def test_ui_api_connectors_test(monkeypatch):
+    import aiforge.ui.app
+    import httpx
+    
+    class MockResp:
+        status_code = 200
+        
+    async def mock_get(*args, **kwargs):
+        return MockResp()
+        
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    
+    with TestClient(aiforge.ui.app.app) as client:
+        res = client.post("/api/connectors/test", json={
+            "base_url": "http://127.0.0.1:11434/v1"
+        })
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "ok"
+        assert "Connesso" in data["message"]
+
+
+

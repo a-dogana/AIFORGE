@@ -41,7 +41,9 @@ function aiforgeApp() {
             evalLoading: false,
             evalOutputHtml: '',
             ollamaLoading: false,
-            ollamaOutputHtml: ''
+            ollamaOutputHtml: '',
+            ggufLoading: false,
+            ggufOutputHtml: ''
         },
 
         // Forge (Training)
@@ -50,11 +52,12 @@ function aiforgeApp() {
             model: 'Qwen/Qwen2.5-Coder-0.5B-Instruct',
             topic: '',
             method: 'lima',
+            turnType: 'single_turn',
             targetSamples: 100,
             qlora: true,
             isRunning: false,
             progress: '0%',
-            terminalLogs: ['> Forgia pronta. Seleziona la metodologia (LIMA o Rapido) e avvia...']
+            terminalLogs: ['> Forgia pronta (Engine: Soup Backend). Seleziona la metodologia (LIMA o Rapido) e avvia...']
         },
 
         // Connectors
@@ -67,6 +70,8 @@ function aiforgeApp() {
         },
         connMsg: '',
         isSavingConn: false,
+        testingConnId: null,
+        connTestResults: {},
 
         async init() {
             await this.checkStatus();
@@ -248,9 +253,21 @@ function aiforgeApp() {
                     })
                 });
                 const data = await res.json();
-                this.merge.preflight = data;
+                if (!res.ok) {
+                    this.merge.preflight = {
+                        status: 'INCOMPATIBLE',
+                        incompatibilities: [data.detail || "Errore nella verifica di compatibilità"],
+                        warnings: []
+                    };
+                } else {
+                    this.merge.preflight = data;
+                }
             } catch (e) {
-                alert("Errore durante il preflight: " + e.message);
+                this.merge.preflight = {
+                    status: 'INCOMPATIBLE',
+                    incompatibilities: ["Errore di connessione: " + e.message],
+                    warnings: []
+                };
             } finally {
                 this.merge.isPreflighting = false;
             }
@@ -352,6 +369,33 @@ function aiforgeApp() {
             }
         },
 
+        async exportGGUF() {
+            if (!this.merge.lastMergedId) return;
+            this.merge.ggufLoading = true;
+            this.merge.ggufOutputHtml = "Generazione pacchetto GGUF (Q4_K_M) per LM Studio / llama.cpp in corso...";
+
+            try {
+                const res = await fetch('/api/export/gguf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        experiment_id: this.merge.lastMergedId,
+                        quantization: "Q4_K_M"
+                    })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    this.merge.ggufOutputHtml = `✅ Pacchetto GGUF creato in: <code>${data.export_dir}</code><br>Target GGUF: <code>${data.target_gguf_path}</code><br>Script di quantizzazione: <code>${data.script_path}</code>`;
+                } else {
+                    this.merge.ggufOutputHtml = `Errore export GGUF: ${data.detail || "Fallito"}`;
+                }
+            } catch (e) {
+                this.merge.ggufOutputHtml = `Errore di rete: ${e.message}`;
+            } finally {
+                this.merge.ggufLoading = false;
+            }
+        },
+
         // --- Forge (Training with SSE stream) ---
         async startForge() {
             if (!this.forge.name || !this.forge.topic) {
@@ -361,7 +405,7 @@ function aiforgeApp() {
 
             this.forge.isRunning = true;
             this.forge.progress = '0%';
-            this.forge.terminalLogs = ['> Inizializzazione pipeline Forge...'];
+            this.forge.terminalLogs = ['> Inizializzazione pipeline Forge (Engine: Soup Backend)...'];
 
             try {
                 const res = await fetch('/api/forge/start', {
@@ -373,6 +417,7 @@ function aiforgeApp() {
                         topic: this.forge.topic,
                         qlora: this.forge.qlora,
                         method: this.forge.method,
+                        turn_type: this.forge.turnType || 'single_turn',
                         target_samples: parseInt(this.forge.targetSamples) || 100
                     })
                 });
@@ -414,6 +459,16 @@ function aiforgeApp() {
                 this.forge.terminalLogs.push(`❌ Errore: ${e.message}`);
                 this.forge.isRunning = false;
             }
+        },
+
+        clearForgeLogs() {
+            this.forge.terminalLogs = ['> Terminale resettato. In attesa di avvio pipeline...'];
+            this.forge.progress = '0%';
+        },
+
+        selectModelForForge(modelId) {
+            this.forge.model = modelId;
+            this.tab = 'forge';
         },
 
         // --- Connectors ---
@@ -463,6 +518,39 @@ function aiforgeApp() {
                 await this.loadConnectors();
             } catch (e) {
                 console.error("Errore cancellazione connettore", e);
+            }
+        },
+
+        async testConnector(conn) {
+            this.testingConnId = conn.id;
+            this.connTestResults[conn.id] = 'Verifica in corso...';
+            try {
+                const res = await fetch('/api/connectors/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: conn.id,
+                        base_url: conn.base_url
+                    })
+                });
+                const data = await res.json();
+                this.connTestResults[conn.id] = (data.status === 'ok' ? '✅ ' : '❌ ') + data.message;
+            } catch (e) {
+                this.connTestResults[conn.id] = '❌ Errore di rete: ' + e.message;
+            } finally {
+                this.testingConnId = null;
+            }
+        },
+
+        setConnectorPreset(preset) {
+            if (preset === 'ollama') {
+                this.newConn = { id: 'ollama_local', name: 'Ollama Locale', base_url: 'http://127.0.0.1:11434/v1', api_key: '' };
+            } else if (preset === 'lmstudio') {
+                this.newConn = { id: 'lmstudio', name: 'LM Studio Locale', base_url: 'http://127.0.0.1:1234/v1', api_key: '' };
+            } else if (preset === 'gemini') {
+                this.newConn = { id: 'google', name: 'Google Gemini (OpenAI Std)', base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/', api_key: '' };
+            } else if (preset === 'openai') {
+                this.newConn = { id: 'openai', name: 'OpenAI Cloud', base_url: 'https://api.openai.com/v1', api_key: '' };
             }
         }
     };

@@ -35,7 +35,7 @@
                 </div>
                 <span class="text-base font-semibold tracking-tight text-slate-900">
                     AIFORGE 
-                    <span class="text-xs font-normal text-slate-500 ml-1 px-1.5 py-0.5 bg-slate-100 rounded border border-slate-200">v2.0 (Alpine.js)</span>
+                    <span class="text-xs font-normal text-slate-500 ml-1 px-1.5 py-0.5 bg-slate-100 rounded border border-slate-200">v2.1 (Studio)</span>
                 </span>
             </div>
             
@@ -96,7 +96,7 @@
                         class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
                         :class="tab === 'forge' ? 'bg-slate-100 text-slate-900 font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'">
                     <svg class="w-4 h-4 mr-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-                    La Forgia (LoRA)
+                    La Forgia (LoRA / Soup)
                 </button>
                 <button @click="switchTab('models')" 
                         class="w-full flex items-center px-3 py-2 text-sm rounded-lg transition-colors"
@@ -141,9 +141,9 @@
                         <div class="text-2xl font-semibold text-slate-900 mt-1" x-text="statTotalExperiments"></div>
                     </div>
                     <div class="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                        <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">Hardware Engine</span>
+                        <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">Hardware & Training Engine</span>
                         <div class="text-sm font-medium text-slate-900 mt-2 flex items-center">
-                            <span class="w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>Apple Silicon MPS (Unified 8GB)
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>Apple Silicon MPS &bull; Soup Backend
                         </div>
                     </div>
                     <div class="bg-slate-50 rounded-lg p-4 border border-slate-100">
@@ -196,17 +196,31 @@
                         <div>
                             <label class="block text-xs font-medium text-slate-700 mb-2">Modello A (Base/Target)</label>
                             <select x-model="merge.modelA" class="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-slate-900">
-                                <template x-for="exp in experiments" :key="'a-' + exp.id">
-                                    <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
-                                </template>
+                                <optgroup label="Modelli Base di Partenza">
+                                    <option value="BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Puro)</option>
+                                    <option value="BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Puro)</option>
+                                    <option value="BASE:openai-community/gpt2">GPT-2 Base (124M)</option>
+                                </optgroup>
+                                <optgroup label="I tuoi Adapter (Fine-Tuned)">
+                                    <template x-for="exp in experiments" :key="'a-' + exp.id">
+                                        <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
+                                    </template>
+                                </optgroup>
                             </select>
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-slate-700 mb-2">Modello B (Adapter/Source)</label>
                             <select x-model="merge.modelB" class="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-slate-900">
-                                <template x-for="exp in experiments" :key="'b-' + exp.id">
-                                    <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
-                                </template>
+                                <optgroup label="I tuoi Adapter (Fine-Tuned)">
+                                    <template x-for="exp in experiments" :key="'b-' + exp.id">
+                                        <option :value="exp.id" x-text="exp.experiment_name || exp.id"></option>
+                                    </template>
+                                </optgroup>
+                                <optgroup label="Modelli Base di Partenza">
+                                    <option value="BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct">Qwen 2.5 Coder 0.5B (Puro)</option>
+                                    <option value="BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct">Qwen 2.5 Coder 1.5B (Puro)</option>
+                                    <option value="BASE:openai-community/gpt2">GPT-2 Base (124M)</option>
+                                </optgroup>
                             </select>
                         </div>
                     </div>
@@ -236,11 +250,11 @@
                         </div>
                     </div>
                     
-                    <div class="flex flex-wrap gap-3 pt-2">
+                    <div class="flex flex-wrap items-center gap-3 pt-2">
                         <button @click="runPreflight()" 
                                 :disabled="merge.isPreflighting"
                                 class="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors shadow-xs">
-                            Verifica Compatibilità
+                            <span x-text="merge.isPreflighting ? 'Verifica in corso...' : 'Verifica Compatibilità'"></span>
                         </button>
                         <button @click="executeMerge()" 
                                 :disabled="merge.isMerging || !merge.modelA || !merge.modelB"
@@ -249,13 +263,25 @@
                         </button>
                     </div>
 
+                    <!-- Merge Status Text Banner -->
+                    <div x-show="merge.mergeStatusText" x-cloak class="p-3.5 rounded-lg border text-xs font-mono"
+                         :class="merge.mergeStatusText.includes('Errore') ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-slate-900 text-white border-slate-800'">
+                        <span x-text="merge.mergeStatusText"></span>
+                    </div>
+
                     <!-- Preflight Result Card -->
                     <div x-show="merge.preflight" x-cloak class="p-4 rounded-lg border text-sm"
-                         :class="merge.preflight?.status === 'COMPATIBLE' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'">
+                         :class="merge.preflight?.status === 'COMPATIBLE' || merge.preflight?.status === 'COMPATIBLE_WITH_WARNINGS' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'">
                         <div class="font-semibold flex items-center space-x-2">
-                            <span x-text="merge.preflight?.status === 'COMPATIBLE' ? '✅ Modelli Compatibili' : '❌ Incompatibilità Rilevata'"></span>
+                            <span x-text="merge.preflight?.status === 'COMPATIBLE' ? '✅ Modelli Perfettamente Compatibili' : (merge.preflight?.status === 'COMPATIBLE_WITH_WARNINGS' ? '⚠️ Compatibile con Avvisi' : '❌ Incompatibilità Rilevata')"></span>
                         </div>
                         <div class="text-xs mt-1" x-text="'Stima RAM richiesta: ' + (merge.preflight?.estimated_ram_mb || 0) + ' MB'"></div>
+                        <template x-for="item in merge.preflight?.incompatibilities" :key="item">
+                            <div class="text-xs mt-1.5 text-rose-700 font-mono" x-text="'• ' + item"></div>
+                        </template>
+                        <template x-for="warn in merge.preflight?.warnings" :key="warn">
+                            <div class="text-xs mt-1.5 text-amber-700 font-mono" x-text="'⚠️ ' + warn"></div>
+                        </template>
                     </div>
 
                     <!-- Post-Merge Actions Toolbar -->
@@ -274,10 +300,14 @@
                                     class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs">
                                 🦙 Esporta Modelfile (Ollama)
                             </button>
+                            <button @click="exportGGUF()" :disabled="merge.ggufLoading" 
+                                    class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs">
+                                📦 Esporta GGUF (LM Studio / llama.cpp)
+                            </button>
                         </div>
-                        <div x-show="merge.evalOutputHtml || merge.ollamaOutputHtml" 
+                        <div x-show="merge.evalOutputHtml || merge.ollamaOutputHtml || merge.ggufOutputHtml" 
                              class="p-3 bg-white rounded border border-emerald-200 font-mono text-xs text-slate-800 whitespace-pre-wrap"
-                             x-html="merge.evalOutputHtml || merge.ollamaOutputHtml"></div>
+                             x-html="merge.evalOutputHtml || merge.ollamaOutputHtml || merge.ggufOutputHtml"></div>
                     </div>
                 </div>
             </div>
@@ -285,12 +315,22 @@
             <!-- 3. LA FORGIA (LoRA / QLoRA TRAINING) -->
             <div x-show="tab === 'forge'" x-cloak class="space-y-6">
                 <div>
-                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">La Forgia (LoRA / QLoRA)</h2>
-                    <p class="text-sm text-slate-500 mt-1">Specializza i modelli linguistici generando dataset sintetici ed eseguendo il fine-tuning.</p>
+                    <h2 class="text-xl font-semibold text-slate-900 tracking-tight">La Forgia (LoRA / QLoRA &bull; Soup Backend)</h2>
+                    <p class="text-sm text-slate-500 mt-1">Specializza i modelli linguistici con dataset sintetici (LIMA) e motore di fine-tuning isolato <strong>Soup</strong> su Apple Silicon.</p>
                 </div>
                 
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="space-y-4 bg-slate-50 p-5 border border-slate-200 rounded-xl">
+                        <!-- Training Engine Badge -->
+                        <div class="flex items-center justify-between p-3 bg-indigo-50/80 rounded-lg border border-indigo-200 text-xs">
+                            <div class="flex items-center space-x-2 text-indigo-950 font-medium">
+                                <span class="text-sm">🍲</span>
+                                <span>Motore Fine-Tuning:</span>
+                                <span class="font-bold text-indigo-700">Soup Backend (Isolato)</span>
+                            </div>
+                            <span class="text-[11px] text-indigo-600 font-mono bg-white px-2 py-0.5 rounded border border-indigo-200">soup.yaml &bull; MPS</span>
+                        </div>
+
                         <div>
                             <label class="block text-xs font-medium text-slate-700 mb-1">Nome Esperimento</label>
                             <input type="text" x-model="forge.name" placeholder="es. C_Specialist_v2" class="w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
@@ -309,12 +349,19 @@
                         </div>
 
                         <!-- Methodology Selection -->
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                                 <label class="block text-xs font-medium text-slate-700 mb-1">Metodologia</label>
                                 <select x-model="forge.method" class="w-full rounded-lg border border-slate-300 py-1.5 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white">
                                     <option value="lima">LIMA (Alta Qualità Curata)</option>
                                     <option value="quick">Rapida (15 Esempi Demo)</option>
+                                </select>
+                            </div>
+                            <div x-show="forge.method === 'lima'">
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Struttura Dialogo</label>
+                                <select x-model="forge.turnType" class="w-full rounded-lg border border-slate-300 py-1.5 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white">
+                                    <option value="single_turn">Singolo Turno (QA)</option>
+                                    <option value="multi_turn">Multi-Turno (Dialogo)</option>
                                 </select>
                             </div>
                             <div x-show="forge.method === 'lima'">
@@ -341,7 +388,7 @@
                         <button @click="startForge()" 
                                 :disabled="forge.isRunning"
                                 class="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-medium text-sm px-4 py-2.5 rounded-lg transition-colors shadow-sm">
-                            <span x-text="forge.isRunning ? 'Addestramento in Corso...' : 'Genera Dati & Addestra (Forgia)'"></span>
+                            <span x-text="forge.isRunning ? 'Addestramento in Corso (Soup Engine)...' : 'Genera Dati & Addestra con Soup'"></span>
                         </button>
                     </div>
                     
@@ -356,6 +403,11 @@
                             </div>
                         </div>
                         
+                        <div class="flex justify-between items-center text-xs text-slate-500 pt-1">
+                            <span class="font-mono text-[11px]">Stream Esecuzione Soup Engine</span>
+                            <button @click="clearForgeLogs()" class="text-slate-400 hover:text-slate-700 text-[11px] underline">Pulisci Log</button>
+                        </div>
+
                         <div class="flex-1 bg-black rounded-lg border border-slate-800 p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[340px]" id="forge-terminal">
                             <template x-for="(log, idx) in forge.terminalLogs" :key="idx">
                                 <div x-text="log"></div>
@@ -382,7 +434,10 @@
                             <p class="text-xs text-slate-500 mt-1">Architettura avanzata (2024), perfetta per Mac 8GB. Prestazioni di codice eccezionali con ~1 GB di RAM.</p>
                             <span class="text-xs font-mono text-slate-400 mt-1 block">Qwen/Qwen2.5-Coder-0.5B-Instruct</span>
                         </div>
-                        <button @click="startServer('BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shrink-0">Usa in Chat</button>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button @click="selectModelForForge('Qwen/Qwen2.5-Coder-0.5B-Instruct')" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium px-3.5 py-2 rounded-lg transition-colors">Usa nella Forgia</button>
+                            <button @click="startServer('BASE:Qwen/Qwen2.5-Coder-0.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg">Usa in Chat</button>
+                        </div>
                     </div>
 
                     <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-colors">
@@ -393,7 +448,10 @@
                             <p class="text-xs text-slate-500 mt-1">Capacità di ragionamento superiore per codice C/Python complesso. Richiede circa 2.5 GB di RAM.</p>
                             <span class="text-xs font-mono text-slate-400 mt-1 block">Qwen/Qwen2.5-Coder-1.5B-Instruct</span>
                         </div>
-                        <button @click="startServer('BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shrink-0">Usa in Chat</button>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button @click="selectModelForForge('Qwen/Qwen2.5-Coder-1.5B-Instruct')" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium px-3.5 py-2 rounded-lg transition-colors">Usa nella Forgia</button>
+                            <button @click="startServer('BASE:Qwen/Qwen2.5-Coder-1.5B-Instruct')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg">Usa in Chat</button>
+                        </div>
                     </div>
 
                     <div class="border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-colors">
@@ -404,7 +462,10 @@
                             <p class="text-xs text-slate-500 mt-1">Modello ultraleggero ideale per test istantanei della pipeline e debug.</p>
                             <span class="text-xs font-mono text-slate-400 mt-1 block">openai-community/gpt2</span>
                         </div>
-                        <button @click="startServer('BASE:openai-community/gpt2')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shrink-0">Usa in Chat</button>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button @click="selectModelForForge('openai-community/gpt2')" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium px-3.5 py-2 rounded-lg transition-colors">Usa nella Forgia</button>
+                            <button @click="startServer('BASE:openai-community/gpt2')" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg">Usa in Chat</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -413,9 +474,20 @@
             <div x-show="tab === 'playground'" x-cloak class="flex flex-col h-[700px] -m-6 sm:-m-8">
                 <!-- Header -->
                 <div class="px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between">
-                    <div>
-                        <h2 class="text-base font-semibold text-slate-900 tracking-tight">Assistant Chat</h2>
-                        <p class="text-xs text-slate-500">Inferenza locale sul modello attivo con accelerazione Metal (MPS).</p>
+                    <div class="flex items-center space-x-3">
+                        <div>
+                            <h2 class="text-base font-semibold text-slate-900 tracking-tight">Assistant Chat</h2>
+                            <p class="text-xs text-slate-500">Inferenza locale sul modello attivo con accelerazione Metal (MPS).</p>
+                        </div>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                              :class="serverStatus === 'online' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'">
+                            <span class="w-1.5 h-1.5 mr-1.5 rounded-full" :class="serverStatus === 'online' ? 'bg-emerald-500' : 'bg-rose-500'"></span>
+                            <span x-text="serverStatus === 'online' ? 'Server Online' : 'Server Offline'"></span>
+                        </span>
+                        <button x-show="serverStatus !== 'online'" @click="startServer(activeModel)" 
+                                class="text-xs bg-slate-900 text-white font-medium px-2.5 py-1 rounded-md hover:bg-slate-800 transition-colors shadow-xs">
+                            Avvia Server
+                        </button>
                     </div>
                     <div class="flex items-center space-x-3 text-xs">
                         <div class="flex items-center space-x-1.5 text-slate-500 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
@@ -440,7 +512,7 @@
                                  :class="msg.sender === 'user' ? 'bg-slate-200 text-slate-700' : 'bg-slate-900 text-white'"
                                  x-text="msg.sender === 'user' ? 'TU' : 'AI'"></div>
                             <div class="rounded-2xl px-4 py-3 text-sm leading-relaxed max-w-2xl whitespace-pre-wrap shadow-sm"
-                                 :class="msg.sender === 'user' ? 'bg-slate-900 text-white rounded-tr-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm'"
+                                 :class="msg.sender === 'user' ? 'bg-slate-900 text-white rounded-tr-sm' : (msg.text.startsWith('Errore') ? 'bg-rose-50 border border-rose-200 text-rose-800 rounded-tl-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm')"
                                  x-text="msg.text"></div>
                         </div>
                     </template>
@@ -476,7 +548,12 @@
                     <p class="text-sm text-slate-500 mt-1">Storico degli addestramenti, checkpoint LoRA e metadati salvati.</p>
                 </div>
 
-                <div class="overflow-x-auto border border-slate-200 rounded-lg">
+                <div x-show="experiments.length === 0" class="text-center py-12 border border-dashed border-slate-200 rounded-lg text-slate-500 bg-slate-50/50">
+                    <p class="text-sm font-semibold text-slate-800">Nessun esperimento registrato</p>
+                    <p class="text-xs mt-1 text-slate-500">Avvia il tuo primo addestramento in "La Forgia (LoRA / Soup)" per creare checkpoint LoRA e modelli fusi.</p>
+                </div>
+
+                <div x-show="experiments.length > 0" class="overflow-x-auto border border-slate-200 rounded-lg">
                     <table class="min-w-full divide-y divide-slate-200 text-sm">
                         <thead class="bg-slate-50">
                             <tr>
@@ -502,11 +579,35 @@
                 </div>
 
                 <!-- Experiment Detail Inspector -->
-                <div x-show="selectedExperiment" x-cloak class="border border-slate-200 rounded-lg p-5 bg-slate-50 space-y-3">
+                <div x-show="selectedExperiment" x-cloak class="border border-slate-200 rounded-lg p-5 bg-slate-50 space-y-4">
                     <div class="flex justify-between items-center">
-                        <h3 class="font-semibold text-slate-900 text-base" x-text="'Dettaglio Esperimento: ' + (selectedExperiment?.experiment_name || selectedExperiment?.id)"></h3>
-                        <button @click="selectedExperiment = null" class="text-xs text-slate-500 hover:text-slate-800">Chiudi</button>
+                        <div>
+                            <h3 class="font-semibold text-slate-900 text-base" x-text="'Dettaglio Esperimento: ' + (selectedExperiment?.experiment_name || selectedExperiment?.id)"></h3>
+                            <span class="text-xs font-mono text-slate-500" x-text="'ID: ' + selectedExperiment?.id"></span>
+                        </div>
+                        <button @click="selectedExperiment = null" class="text-xs text-slate-500 hover:text-slate-800 px-2.5 py-1 bg-white rounded border border-slate-200">Chiudi</button>
                     </div>
+
+                    <!-- Structured Summary Cards -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div class="bg-white p-3 rounded-md border border-slate-200">
+                            <span class="text-slate-500 block">Modello Base:</span>
+                            <span class="font-mono font-medium text-slate-900 truncate block mt-0.5" x-text="selectedExperiment?.config?.architecture?.llm_config?.model_id || 'N/A'"></span>
+                        </div>
+                        <div class="bg-white p-3 rounded-md border border-slate-200">
+                            <span class="text-slate-500 block">Training Engine:</span>
+                            <span class="font-bold text-indigo-700 block mt-0.5" x-text="selectedExperiment?.config?.backend === 'soup' ? 'Soup Backend (Isolato)' : (selectedExperiment?.config?.backend || 'Native PyTorch')"></span>
+                        </div>
+                        <div class="bg-white p-3 rounded-md border border-slate-200">
+                            <span class="text-slate-500 block">Epoche / Batch:</span>
+                            <span class="font-mono text-slate-900 block mt-0.5" x-text="(selectedExperiment?.config?.epochs || 'N/A') + ' ep / ' + (selectedExperiment?.config?.batch_size || 'N/A') + ' bs'"></span>
+                        </div>
+                        <div class="bg-white p-3 rounded-md border border-slate-200">
+                            <span class="text-slate-500 block">Checkpoint:</span>
+                            <span class="font-mono text-slate-700 truncate block mt-0.5" x-text="selectedExperiment?.checkpoint_path || 'N/A'"></span>
+                        </div>
+                    </div>
+
                     <pre class="bg-slate-900 text-slate-100 p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-[300px]" x-text="JSON.stringify(selectedExperiment, null, 2)"></pre>
                 </div>
             </div>
@@ -522,12 +623,30 @@
                     <!-- List -->
                     <div class="space-y-3">
                         <template x-for="conn in connectors" :key="conn.id">
-                            <div class="border border-slate-200 rounded-lg p-4 bg-white flex justify-between items-center shadow-xs">
-                                <div>
-                                    <h4 class="text-sm font-semibold text-slate-900" x-text="conn.name"></h4>
-                                    <div class="text-xs text-slate-500 mt-1 font-mono" x-text="conn.base_url"></div>
+                            <div class="border border-slate-200 rounded-lg p-4 bg-white shadow-xs space-y-2.5 overflow-hidden">
+                                <div class="flex justify-between items-start gap-3">
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                                            <h4 class="text-sm font-semibold text-slate-900 truncate" x-text="conn.name"></h4>
+                                            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border shrink-0"
+                                                  :class="conn.has_key ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'"
+                                                  x-text="conn.has_key ? 'Key Protetta' : 'No Key'"></span>
+                                        </div>
+                                        <div class="text-xs text-slate-500 mt-1 font-mono break-all" :title="conn.base_url" x-text="conn.base_url"></div>
+                                    </div>
+                                    <div class="flex items-center space-x-1.5 shrink-0 pt-0.5">
+                                        <button @click="testConnector(conn)" 
+                                                :disabled="testingConnId === conn.id" 
+                                                class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-medium transition-colors">
+                                            <span x-text="testingConnId === conn.id ? '...' : 'Verifica'"></span>
+                                        </button>
+                                        <button @click="deleteConnector(conn.id)" 
+                                                class="px-2 py-1 hover:bg-rose-50 text-rose-600 rounded text-xs font-medium transition-colors">
+                                            Rimuovi
+                                        </button>
+                                    </div>
                                 </div>
-                                <button @click="deleteConnector(conn.id)" class="text-xs text-rose-600 hover:text-rose-800 font-medium">Rimuovi</button>
+                                <div x-show="connTestResults[conn.id]" class="text-xs font-mono pt-1 text-slate-700 border-t border-slate-100" x-text="connTestResults[conn.id]"></div>
                             </div>
                         </template>
                         <div x-show="connectors.length === 0" class="text-xs text-slate-400 p-4 border border-dashed rounded-lg text-center">
@@ -537,7 +656,18 @@
 
                     <!-- New Connector Form -->
                     <div class="bg-slate-50 p-5 rounded-lg border border-slate-200 space-y-4">
-                        <h3 class="text-sm font-semibold text-slate-900">Aggiungi Connettore</h3>
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-sm font-semibold text-slate-900">Aggiungi Connettore</h3>
+                        </div>
+                        <div>
+                            <span class="block text-xs font-medium text-slate-500 mb-1.5">Preset Rapidi:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" @click="setConnectorPreset('ollama')" class="text-[11px] bg-white border border-slate-200 hover:bg-slate-100 px-2 py-1 rounded text-slate-700 font-medium">Ollama Locale</button>
+                                <button type="button" @click="setConnectorPreset('lmstudio')" class="text-[11px] bg-white border border-slate-200 hover:bg-slate-100 px-2 py-1 rounded text-slate-700 font-medium">LM Studio</button>
+                                <button type="button" @click="setConnectorPreset('gemini')" class="text-[11px] bg-white border border-slate-200 hover:bg-slate-100 px-2 py-1 rounded text-slate-700 font-medium">Google Gemini</button>
+                                <button type="button" @click="setConnectorPreset('openai')" class="text-[11px] bg-white border border-slate-200 hover:bg-slate-100 px-2 py-1 rounded text-slate-700 font-medium">OpenAI</button>
+                            </div>
+                        </div>
                         <div>
                             <label class="block text-xs font-medium text-slate-700 mb-1">ID (es. ollama_local)</label>
                             <input type="text" x-model="newConn.id" class="w-full rounded-md border border-slate-300 py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">

@@ -1,132 +1,125 @@
-import pytest
 import os
-import yaml
+import pytest
+from unittest.mock import patch, MagicMock
 from aiforge.core.config import ExperimentConfig
 from aiforge.llm.backends.soup import SoupBackend
+from aiforge.core.run_forge import resolve_soup_env
 
-def test_soup_backend_absent_env():
-    # If Soup env path is not provided
+def test_resolve_soup_env(monkeypatch, tmp_path):
+    # Case 1: SOUP_ENV_PATH set and exists
+    test_env = tmp_path / "custom_soup"
+    test_env.mkdir()
+    monkeypatch.setenv("SOUP_ENV_PATH", str(test_env))
+    assert resolve_soup_env() == str(test_env)
+
+    # Case 2: SOUP_ENV_PATH not set, fallback
+    monkeypatch.delenv("SOUP_ENV_PATH", raising=False)
+    resolved = resolve_soup_env()
+    assert resolved is not None
+    assert "venv_soup" in resolved
+
+def test_soup_backend_init_missing_env():
     cfg = ExperimentConfig(
-        experiment_name="test",
+        experiment_name="test_soup",
         domain="llm",
         task="generation",
-        architecture={"type": "llm", "llm_config": {"model_id": "test"}},
-        data={"type": "jsonl", "csv_config": {"path": "test.jsonl", "target_column": "x"}},
-        backend="soup"
+        architecture={"type": "llm", "llm_config": {"model_id": "test_id"}},
+        data={"type": "jsonl", "csv_config": {"path": "dummy.jsonl", "target_column": "text"}},
+        backend="soup",
+        backend_args={}
     )
     with pytest.raises(ValueError, match="soup_env_path is required"):
         SoupBackend(cfg)
 
-def test_soup_backend_invalid_env(tmp_path):
-    # If Soup env path is provided but invalid
-    cfg = ExperimentConfig(
-        experiment_name="test",
-        domain="llm",
-        task="generation",
-        architecture={"type": "llm", "llm_config": {"model_id": "test"}},
-        data={"type": "jsonl", "csv_config": {"path": "test.jsonl", "target_column": "x"}},
-        backend="soup",
-        backend_args={"soup_env_path": str(tmp_path / "fake_env")}
-    )
-    with pytest.raises(FileNotFoundError, match="Soup environment not found"):
-        SoupBackend(cfg)
-        
-def test_soup_backend_missing_executable(tmp_path):
-    env_dir = tmp_path / "fake_env"
+def test_soup_backend_translate_config(tmp_path):
+    env_dir = tmp_path / "mock_soup_env"
     env_dir.mkdir()
-    cfg = ExperimentConfig(
-        experiment_name="test",
-        domain="llm",
-        task="generation",
-        architecture={"type": "llm", "llm_config": {"model_id": "test"}},
-        data={"type": "jsonl", "csv_config": {"path": "test.jsonl", "target_column": "x"}},
-        backend="soup",
-        backend_args={"soup_env_path": str(env_dir)}
-    )
-    with pytest.raises(FileNotFoundError, match="Python executable not found"):
-        SoupBackend(cfg)
+    (env_dir / "bin").mkdir()
+    (env_dir / "bin" / "python").touch()
+    (env_dir / "bin" / "soup").touch()
 
-@pytest.mark.skipif(not os.path.exists("venv_soup/bin/soup"), reason="Soup not installed locally")
-def test_soup_backend_translation():
     cfg = ExperimentConfig(
-        experiment_name="test",
-        domain="llm",
-        task="generation",
-        architecture={"type": "llm", "llm_config": {"model_id": "gpt2", "lora_r": 16}},
-        data={"type": "jsonl", "csv_config": {"path": "test.jsonl", "target_column": "x"}},
-        backend="soup",
-        backend_args={"soup_env_path": "venv_soup"}
-    )
-    backend = SoupBackend(cfg)
-    soup_cfg = backend._translate_config()
-    
-    assert soup_cfg["base"] == "gpt2"
-    assert soup_cfg["training"]["lora"]["r"] == 16
-    assert soup_cfg["data"]["train"] == "test.jsonl"
-
-@pytest.mark.skipif(not os.path.exists("venv_soup/bin/soup"), reason="Soup not installed locally")
-def test_soup_backend_real_training(tmp_path):
-    # 1. Create a tiny dummy jsonl dataset
-    import json
-    dataset_path = tmp_path / "train.jsonl"
-    with open(dataset_path, "w") as f:
-        f.write(json.dumps({"instruction": "say hi", "input": "", "output": "hi"}) + "\n")
-        f.write(json.dumps({"instruction": "say bye", "input": "", "output": "bye"}) + "\n")
-        
-    # 2. Configure SoupBackend
-    cfg = ExperimentConfig(
-        experiment_name="soup_test",
+        experiment_name="test_soup_run",
         domain="llm",
         task="generation",
         architecture={
-            "type": "llm", 
-            "llm_config": {"model_id": "gpt2", "lora_enabled": True, "lora_r": 8}
+            "type": "llm",
+            "llm_config": {
+                "model_id": "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+                "lora_enabled": True,
+                "lora_r": 8,
+                "lora_alpha": 16,
+                "max_seq_length": 512
+            }
         },
-        data={"type": "jsonl", "csv_config": {"path": str(dataset_path), "target_column": "output"}},
-        batch_size=1,
-        epochs=1,
-        device="cpu", # Force CPU to avoid taking too much memory
+        data={"type": "jsonl", "csv_config": {"path": "datasets/test.jsonl", "target_column": "output"}},
+        batch_size=2,
+        epochs=3,
+        learning_rate=0.0002,
         backend="soup",
-        backend_args={"soup_env_path": "venv_soup"}
+        backend_args={
+            "soup_env_path": str(env_dir),
+            "chat_template": "chatml",
+            "quantization": "4bit"
+        }
     )
-    
+
+    backend = SoupBackend(cfg)
+    soup_cfg = backend._translate_config()
+
+    assert soup_cfg["base"] == "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+    assert soup_cfg["task"] == "sft"
+    assert soup_cfg["data"]["chat_template"] == "chatml"
+    assert soup_cfg["data"]["max_length"] == 512
+    assert soup_cfg["training"]["batch_size"] == 2
+    assert soup_cfg["training"]["epochs"] == 3
+    assert soup_cfg["training"]["lr"] == 0.0002
+    assert soup_cfg["training"]["lora"]["r"] == 8
+    assert soup_cfg["training"]["lora"]["alpha"] == 16
+    assert soup_cfg["training"]["quantization"] == "4bit"
+
+def test_soup_backend_train_mocked(tmp_path):
+    env_dir = tmp_path / "mock_soup_env"
+    env_dir.mkdir()
+    (env_dir / "bin").mkdir()
+    (env_dir / "bin" / "python").touch()
+    (env_dir / "bin" / "soup").touch()
+
+    cfg = ExperimentConfig(
+        experiment_name="test_soup_train",
+        domain="llm",
+        task="generation",
+        architecture={
+            "type": "llm",
+            "llm_config": {
+                "model_id": "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+                "lora_enabled": True
+            }
+        },
+        data={"type": "jsonl", "csv_config": {"path": "datasets/test.jsonl", "target_column": "output"}},
+        backend="soup",
+        backend_args={
+            "soup_env_path": str(env_dir)
+        }
+    )
+
     backend = SoupBackend(cfg)
     
-    # 3. We monkeypatch subprocess.run to simulate a successful Soup training run
-    # because running actual Soup train might take too long or crash the CI
-    # Wait, the prompt says "Training minimo reale". I should run it if possible.
-    # But Soup might not support "gpt2" directly without downloading. 
-    # Let's mock the subprocess for safety in the unit test, and we'll do the real check in a script.
-    import subprocess
-    from unittest.mock import MagicMock
-    
-    original_run = subprocess.run
-    
-    def mock_run(cmd, *args, **kwargs):
-        if "train" in cmd:
-            # Create a fake adapter file in the output dir
-            config_idx = cmd.index("--config")
-            config_path = cmd[config_idx + 1]
-            with open(config_path, "r") as f:
-                c = yaml.safe_load(f)
-            out_dir = c["output"]
-            os.makedirs(out_dir, exist_ok=True)
-            with open(os.path.join(out_dir, "adapter_config.json"), "w") as f:
-                f.write('{"peft_type": "LORA"}')
-                
-            res = MagicMock()
-            res.returncode = 0
-            res.stdout = "Mock Training completed"
-            return res
-        return original_run(cmd, *args, **kwargs)
+    with patch("subprocess.Popen") as mock_popen, patch("subprocess.run") as mock_run:
+        # Mock version call
+        mock_run.return_value = MagicMock(stdout="Soup 1.0.0\n")
         
-    import aiforge.llm.backends.soup
-    aiforge.llm.backends.soup.subprocess.run = mock_run
-    
-    try:
-        res = backend.train(str(dataset_path))
-        assert os.path.exists(res["checkpoint_path"])
-        assert res["exit_code"] == 0
-        assert "Mock Training completed" in res["training_log"]
-    finally:
-        aiforge.llm.backends.soup.subprocess.run = original_run
+        # Mock training execution
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = [
+            b"Starting Soup training...\n",
+            b"Epoch 1/3 - loss: 0.25\n",
+            b""
+        ]
+        mock_process.poll.return_value = 0
+        mock_popen.return_value = mock_process
+
+        res = backend.train("datasets/sample.jsonl")
+        assert "checkpoint_path" in res
+        assert "soup_version" in res
+        assert res["backend"] == "soup"

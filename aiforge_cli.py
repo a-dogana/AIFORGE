@@ -459,7 +459,14 @@ def run_serve_llm(args):
 def run_ui(args):
     """Start the local Web Dashboard."""
     import uvicorn
-    print(f"Starting AIFORGE Web Dashboard on http://{args.host}:{args.port}")
+    import webbrowser
+    import threading
+    url = f"http://{args.host}:{args.port}"
+    print(f"Starting AIFORGE Web Dashboard on {url}")
+    try:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    except Exception:
+        pass
     uvicorn.run("aiforge.ui.app:app", host=args.host, port=args.port, log_level="info")
 
 def run_merge(args):
@@ -514,6 +521,39 @@ def run_export_ollama(args):
         print(f"Ollama export failed: {e}")
         import sys
         sys.exit(1)
+
+
+def run_forge(args):
+    from aiforge.core.run_forge import run_forge_pipeline
+    run_forge_pipeline(args)
+
+
+def run_lima_generate(args):
+    from aiforge.core.run_forge import run_lima_generate as run_lima_gen
+    run_lima_gen(args)
+
+
+def run_export_gguf(args):
+    from aiforge.deployment.gguf_export import GGUFExporter
+    from aiforge.experiments.registry import ExperimentRegistry
+    reg = ExperimentRegistry()
+    exporter = GGUFExporter(reg)
+    try:
+        res = exporter.export(
+            args.id,
+            quantization=args.quantization,
+            output_dir=args.output,
+            custom_name=args.name
+        )
+        print(f"GGUF Export package created: {res['export_dir']}")
+        print(f"Target GGUF: {res['target_gguf_path']}")
+        print(f"Metadata: {res['meta_path']}")
+        print(f"Conversion Tool: {res['script_path']}")
+    except Exception as e:
+        print(f"GGUF export failed: {e}")
+        import sys
+        sys.exit(1)
+
 
 
 def main():
@@ -612,6 +652,36 @@ def main():
     parser_ui.add_argument("--host", type=str, default="127.0.0.1", help="Host interface to bind to")
     parser_ui.add_argument("--port", type=int, default=8500, help="Port to listen on")
     parser_ui.set_defaults(func=run_ui)
+
+    # forge command (v2.1)
+    parser_forge = subparsers.add_parser("forge", help="Run full Forge pipeline (LIMA/Synthetic Data + LoRA/QLoRA Training via Soup Engine + Registry)")
+    parser_forge.add_argument("--name", type=str, required=True, help="Experiment name")
+    parser_forge.add_argument("--model", type=str, required=True, help="Base model HuggingFace ID")
+    parser_forge.add_argument("--topic", type=str, required=True, help="Topic for synthetic dataset")
+    parser_forge.add_argument("--qlora", action="store_true", default=False, help="Enable 4-bit NF4 QLoRA quantization")
+    parser_forge.add_argument("--method", choices=["quick", "lima"], default="quick", help="Dataset generation strategy: 'quick' or 'lima'")
+    parser_forge.add_argument("--target-samples", type=int, default=100, help="Target curated samples count for LIMA")
+    parser_forge.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
+    parser_forge.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")
+    parser_forge.set_defaults(func=run_forge)
+
+    # lima-generate command (v2.0)
+    parser_lima = subparsers.add_parser("lima-generate", help="Generate and curate high-quality LIMA synthetic dataset")
+    parser_lima.add_argument("--topic", type=str, required=True, help="Topic for synthetic dataset")
+    parser_lima.add_argument("--target-samples", type=int, default=100, help="Target curated samples count")
+    parser_lima.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
+    parser_lima.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")
+    parser_lima.add_argument("--output", type=str, default=None, help="Target output JSONL path")
+    parser_lima.add_argument("--model", type=str, default=None, help="Teacher LLM model name")
+    parser_lima.set_defaults(func=run_lima_generate)
+
+    # export-gguf command (v2.1)
+    parser_gguf = subparsers.add_parser("export-gguf", help="Export an LLM model to GGUF format for llama.cpp and LM Studio")
+    parser_gguf.add_argument("id", type=str, help="Experiment ID to export")
+    parser_gguf.add_argument("--quantization", type=str, default="Q4_K_M", choices=["F16", "Q8_0", "Q5_K_M", "Q4_K_M", "Q4_0", "Q3_K_M"], help="GGUF quantization level")
+    parser_gguf.add_argument("--output", type=str, default=None, help="Output export directory")
+    parser_gguf.add_argument("--name", type=str, default=None, help="Custom GGUF model name")
+    parser_gguf.set_defaults(func=run_export_gguf)
     
     args = parser.parse_args()
     args.func(args)

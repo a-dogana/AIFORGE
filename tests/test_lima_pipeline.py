@@ -189,3 +189,74 @@ def test_lima_staging_manager_path_traversal_prevention(tmp_path):
         with pytest.raises(ValueError):
             manager.get_paths(bad_id)
 
+
+def test_lima_quality_filter_multi_turn():
+    samples = [
+        # Valid multi-turn
+        {
+            "messages": [
+                {"role": "user", "content": "Come si implementa un mutex in C POSIX?"},
+                {"role": "assistant", "content": "Si utilizza pthread_mutex_init(&lock, NULL) e poi pthread_mutex_lock/unlock per proteggere la sezione critica."},
+                {"role": "user", "content": "Come evitare il deadlock in caso di lock multipli?"},
+                {"role": "assistant", "content": "Per evitare il deadlock occorre imporre un ordine globale e costante di acquisizione di tutti i mutex o usare pthread_mutex_trylock."}
+            ]
+        },
+        # Duplicate of the first (same user prompt)
+        {
+            "messages": [
+                {"role": "user", "content": "come si implementa un mutex in c posix?"},
+                {"role": "assistant", "content": "Altra risposta molto lunga e dettagliata che però ha la stessa domanda iniziale."}
+            ]
+        },
+        # Malformed: only 1 turn
+        {
+            "messages": [
+                {"role": "user", "content": "Domanda singola senza risposta"}
+            ]
+        },
+        # Too short assistant output
+        {
+            "messages": [
+                {"role": "user", "content": "Altra domanda unica e diversa?"},
+                {"role": "assistant", "content": "Breve"}
+            ]
+        }
+    ]
+
+    accepted, stats = LIMAQualityFilter.filter_samples(samples, min_output_len=30)
+    assert len(accepted) == 1
+    assert stats["duplicates_removed"] == 1
+    assert stats["malformed_removed"] == 1
+    assert stats["too_short_removed"] == 1
+    assert "messages" in accepted[0]
+
+
+def test_lima_pipeline_micro_batch_multi_turn():
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.choices = [
+        MagicMock(message=MagicMock(content="""[
+            {
+                "messages": [
+                    {"role": "user", "content": "Come allocare memoria?"},
+                    {"role": "assistant", "content": "Con malloc() o calloc() verificando sempre il puntatore ritornato."},
+                    {"role": "user", "content": "E per liberarla?"},
+                    {"role": "assistant", "content": "Con free() e azzerando il puntatore a NULL."}
+                ]
+            }
+        ]"""))
+    ]
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    pipeline = LIMAPipeline(
+        client=mock_client,
+        model_name="mock-model",
+        min_request_delay=0.0
+    )
+
+    batch = pipeline.generate_micro_batch("Gestione Memoria", count=1, turn_type="multi_turn")
+    assert len(batch) == 1
+    assert "messages" in batch[0]
+    assert len(batch[0]["messages"]) == 4
+
+

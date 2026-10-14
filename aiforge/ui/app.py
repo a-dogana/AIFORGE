@@ -11,6 +11,7 @@ from typing import List, Optional
 import subprocess
 import yaml
 import json
+import time
 
 from aiforge.experiments.registry import ExperimentRegistry
 
@@ -282,6 +283,45 @@ def delete_connector(conn_id: str, request: Request):
     # We leave the keychain secret intact to be safe, or we could overwrite it.
     return {"status": "success"}
 
+class TestConnectorRequest(BaseModel):
+    id: Optional[str] = None
+    base_url: str
+    api_key: Optional[str] = None
+
+@app.post("/api/connectors/test")
+async def test_connector(req: TestConnectorRequest):
+    """Test connectivity and latency to an OpenAI-compatible endpoint."""
+    key = req.api_key
+    if not key or key == "●●●●●●●● (Configured)":
+        if req.id:
+            from aiforge.core.secrets import get_secret
+            key = get_secret(req.id)
+            
+    headers = {}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+        
+    base = req.base_url.rstrip("/")
+    test_urls = [f"{base}/models", base]
+    start_time = time.time()
+    last_err = "Nessuna risposta dal server"
+    
+    async with httpx.AsyncClient(trust_env=False, verify=False, timeout=6.0) as client:
+        for u in test_urls:
+            try:
+                resp = await client.get(u, headers=headers)
+                latency_ms = int((time.time() - start_time) * 1000)
+                if resp.status_code == 200:
+                    return {"status": "ok", "latency_ms": latency_ms, "message": f"Connesso ({latency_ms} ms)"}
+                elif resp.status_code in [401, 403]:
+                    return {"status": "auth_error", "latency_ms": latency_ms, "message": f"Server raggiungibile ma chiave API non valida (HTTP {resp.status_code})"}
+                elif resp.status_code < 500:
+                    return {"status": "ok", "latency_ms": latency_ms, "message": f"Endpoint raggiungibile (HTTP {resp.status_code}, {latency_ms} ms)"}
+            except Exception as e:
+                last_err = str(e)
+                
+    return {"status": "error", "message": f"Connessione fallita: {last_err}"}
+
         
 # --- Model Management API ---
 
@@ -296,6 +336,7 @@ class ForgeRequest(BaseModel):
     qlora: bool = False
     method: str = "quick"
     target_samples: int = 100
+    turn_type: str = "single_turn"
 
 @app.post("/api/forge/start")
 async def start_forge(req: ForgeRequest):
@@ -307,7 +348,8 @@ async def start_forge(req: ForgeRequest):
             "--model", req.model,
             "--topic", req.topic,
             "--method", req.method,
-            "--target-samples", str(req.target_samples)
+            "--target-samples", str(req.target_samples),
+            "--turn-type", req.turn_type
         ]
         if req.qlora:
             cmd.append("--qlora")
@@ -403,6 +445,11 @@ if os.path.exists(static_dir):
 def index():
     return FileResponse(os.path.join(os.path.dirname(__file__), "templates", "index.html"))
 
+@app.post("/api/merge/preflight")
+def merge_preflight_post(req: MergeRequest):
+    lab = MergeLab(registry)
+    return lab.validate_pre_merge(req)
+
 @app.get("/api/merge/preflight")
 def merge_preflight(model_a: str, model_b: str, strategy: str):
     lab = MergeLab(registry)
@@ -436,6 +483,26 @@ def export_to_ollama(req: OllamaExportRequest):
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+class GGUFExportRequest(BaseModel):
+    experiment_id: str
+    quantization: str = "Q4_K_M"
+    custom_name: Optional[str] = None
+
+@app.post("/api/export/gguf")
+def export_to_gguf(req: GGUFExportRequest):
+    from aiforge.deployment.gguf_export import GGUFExporter
+    exporter = GGUFExporter(registry)
+    try:
+        res = exporter.export(
+            experiment_id=req.experiment_id,
+            quantization=req.quantization,
+            custom_name=req.custom_name
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 class MergeEvaluateRequest(BaseModel):
     model_a_id: str

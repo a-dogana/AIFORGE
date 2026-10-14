@@ -4,33 +4,43 @@ import time
 import argparse
 import sys
 import re
+from typing import Optional
 from openai import OpenAI
 from aiforge.core.secrets import get_secret
 from aiforge.core.config import ExperimentConfig
 from aiforge.llm.backends.soup import SoupBackend
 from aiforge.experiments.registry import ExperimentRegistry
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--topic", required=True)
-    parser.add_argument("--qlora", action="store_true", default=False, help="Enable 4-bit NF4 QLoRA quantization")
-    parser.add_argument("--method", choices=["quick", "lima"], default="quick", help="Dataset generation strategy: 'quick' or 'lima'")
-    parser.add_argument("--target-samples", type=int, default=100, help="Target curated samples count for LIMA")
-    parser.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
-    args = parser.parse_args()
 
-    print(f"=== FORGE TRAINING PIPELINE: {args.name} (Method: {args.method.upper()}) ===", flush=True)
+def resolve_soup_env() -> str:
+    """Resolve the Soup virtual environment path dynamically."""
+    # 1. Explicit environment variable
+    env_soup = os.environ.get("SOUP_ENV_PATH")
+    if env_soup and os.path.exists(env_soup):
+        return os.path.abspath(env_soup)
+    
+    # 2. Local workspace venv_soup
+    local_soup = os.path.abspath("./venv_soup")
+    if os.path.exists(local_soup):
+        return local_soup
 
-    print("PROGRESS: 10", flush=True)
-    print("1. Caricamento connettore da registry...", flush=True)
+    # 3. Known fallback locations
+    fallback = "/Users/alessandrodogana/.gemini/antigravity/brain/177bf045-2b86-412c-a413-1057a8eeec8b/venv_soup"
+    if os.path.exists(fallback):
+        return fallback
+
+    # 4. Default to ./venv_soup so error messages are actionable
+    return local_soup
+
+
+def get_llm_client() -> OpenAI:
+    """Retrieve an authenticated OpenAI-compatible client from registry or environment."""
     connectors_path = "registry/connectors.json"
     api_key = None
     base_url = "https://api.openai.com/v1"
     
     if os.path.exists(connectors_path):
-        with open(connectors_path, "r") as f:
+        with open(connectors_path, "r", encoding="utf-8") as f:
             connectors = json.load(f)
             if connectors:
                 conn = connectors[0]
@@ -39,18 +49,27 @@ def main():
                 print(f"✅ Utilizzo connettore: {conn['name']}", flush=True)
 
     if not api_key:
-        print("❌ Errore: Nessun connettore con API Key trovata. Vai in Connettori (OpenAI Std) per configurarlo.", flush=True)
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+
+    if not api_key:
+        print("❌ Errore: Nessun connettore con API Key trovata. Configuralo nella UI (Connettori API) o esporta OPENAI_API_KEY.", flush=True)
         sys.exit(1)
+        
+    return OpenAI(api_key=api_key, base_url=base_url)
+
+
+def run_forge_pipeline(args):
+    """Execute the full Forge pipeline (data generation + fine-tuning + registry)."""
+    print(f"=== FORGE TRAINING PIPELINE: {args.name} (Method: {args.method.upper()}) ===", flush=True)
+
+    print("PROGRESS: 10", flush=True)
+    print("1. Caricamento connettore da registry...", flush=True)
+    client = get_llm_client()
     
     print("PROGRESS: 20", flush=True)
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url
-    )
-    
     clean_name = re.sub(r"[^\w\-]", "_", args.name.strip().lower())
     dataset_path = f"datasets/forge_{clean_name}.jsonl"
-    candidates = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    candidates = ["gemini-3.8-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     
     if args.method == "lima":
         print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Target: {args.target_samples} campioni)...", flush=True)
@@ -69,12 +88,14 @@ def main():
             print(f"PROGRESS: {scaled_pct}", flush=True)
             print(f"LIMA [{pct}%]: {msg}", flush=True)
 
+        turn_type = getattr(args, "turn_type", "single_turn")
         res_lima = pipeline.run_pipeline(
             job_id=clean_name,
             main_topic=args.topic,
             target_samples=args.target_samples,
             batch_size=args.batch_size,
             output_final_path=dataset_path,
+            turn_type=turn_type,
             progress_cb=lima_progress
         )
         print(f"✅ Dataset LIMA Curato: {res_lima['curated_count']} campioni salvati (Filtrati da {res_lima['raw_staged_count']} grezzi)!", flush=True)
@@ -129,7 +150,7 @@ Struttura:
     print("PROGRESS: 60", flush=True)
     print("4. Preparazione configurazione per il fine-tuning LoRA...", flush=True)
     
-    soup_env = "/Users/alessandrodogana/.gemini/antigravity/brain/177bf045-2b86-412c-a413-1057a8eeec8b/venv_soup"
+    soup_env = resolve_soup_env()
     cfg = ExperimentConfig(
         experiment_name=args.name,
         domain="llm",
@@ -182,6 +203,67 @@ Struttura:
     )
     print("PROGRESS: 100", flush=True)
     print("🎉 Pipeline Forge Completata con Successo!", flush=True)
+
+
+def run_lima_generate(args):
+    """Generate curated synthetic dataset using LIMA without running training."""
+    topic = args.topic
+    target_samples = getattr(args, "target_samples", 100)
+    batch_size = getattr(args, "batch_size", 20)
+    output_path = getattr(args, "output", None)
+    if not output_path:
+        clean_topic = re.sub(r"[^\w\-]", "_", topic.strip().lower())[:30]
+        output_path = f"datasets/lima_{clean_topic}.jsonl"
+        
+    print(f"=== LIMA SYNTHETIC DATASET GENERATION ===", flush=True)
+    print(f"Topic: {topic}")
+    print(f"Target Samples: {target_samples} (Micro-batch: {batch_size})")
+    print(f"Output File: {output_path}")
+
+    client = get_llm_client()
+    from aiforge.data.lima_pipeline import LIMAPipeline
+    candidates = ["gemini-3.8-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    target_model = getattr(args, "model", None) or candidates[0]
+    
+    pipeline = LIMAPipeline(
+        client=client,
+        model_name=target_model,
+        min_request_delay=1.0,
+        max_retries=4
+    )
+    
+    def on_progress(pct, msg):
+        print(f"[{pct}%] {msg}", flush=True)
+        
+    clean_job = re.sub(r"[^\w\-]", "_", os.path.basename(output_path).replace(".jsonl", ""))
+    turn_type = getattr(args, "turn_type", "single_turn")
+    result = pipeline.run_pipeline(
+        job_id=clean_job,
+        main_topic=topic,
+        target_samples=target_samples,
+        batch_size=batch_size,
+        output_final_path=output_path,
+        turn_type=turn_type,
+        progress_cb=on_progress
+    )
+    print(f"✅ Completato! Dataset LIMA generato con successo: {result['curated_count']} campioni salvati in {output_path}")
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AIFORGE Unified Forge Training Pipeline")
+    parser.add_argument("--name", required=True, help="Experiment name")
+    parser.add_argument("--model", required=True, help="Base model HuggingFace ID")
+    parser.add_argument("--topic", required=True, help="Topic for synthetic dataset generation")
+    parser.add_argument("--qlora", action="store_true", default=False, help="Enable 4-bit NF4 QLoRA quantization")
+    parser.add_argument("--method", choices=["quick", "lima"], default="quick", help="Dataset generation strategy: 'quick' or 'lima'")
+    parser.add_argument("--target-samples", type=int, default=100, help="Target curated samples count for LIMA")
+    parser.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
+    parser.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")
+    args = parser.parse_args()
+
+    run_forge_pipeline(args)
+
 
 if __name__ == "__main__":
     main()

@@ -220,7 +220,9 @@ class NF4QuantizedLinear(nn.Module):
         if self.lora_r > 0 and self.lora_A is not None:
             # LoRA delta: (x * dropout) @ A @ B * scaling
             drop_x = self.dropout(x)
-            lora_out = (drop_x @ self.lora_A) @ self.lora_B
+            lora_a = self.lora_A.to(x.dtype)
+            lora_b = self.lora_B.to(x.dtype)
+            lora_out = (drop_x @ lora_a) @ lora_b
             out = out + (lora_out * self.scaling)
 
         return out

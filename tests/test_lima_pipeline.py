@@ -170,3 +170,22 @@ def test_lima_pipeline_retry_on_rate_limit():
     subtopics = pipeline.generate_taxonomy("Test Topic", target_subtopics=1)
     assert len(subtopics) == 1
     assert subtopics[0] == "Sotto-argomento 1"
+
+
+def test_lima_staging_manager_path_traversal_prevention(tmp_path):
+    staging_dir = str(tmp_path / "staging")
+    manager = LIMAStagingManager(staging_dir=staging_dir)
+
+    malicious_ids = [
+        "../../etc/passwd",
+        "../sensitive",
+        "sub/dir/attack",
+        "..\\windows\\system32",
+        "",
+        None
+    ]
+
+    for bad_id in malicious_ids:
+        with pytest.raises(ValueError):
+            manager.get_paths(bad_id)
+

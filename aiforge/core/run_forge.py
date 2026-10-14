@@ -3,6 +3,7 @@ import json
 import time
 import argparse
 import sys
+import re
 from openai import OpenAI
 from aiforge.core.secrets import get_secret
 from aiforge.core.config import ExperimentConfig
@@ -47,7 +48,8 @@ def main():
         base_url=base_url
     )
     
-    dataset_path = f"datasets/forge_{args.name.lower().replace(' ', '_')}.jsonl"
+    clean_name = re.sub(r"[^\w\-]", "_", args.name.strip().lower())
+    dataset_path = f"datasets/forge_{clean_name}.jsonl"
     candidates = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     
     if args.method == "lima":
@@ -68,7 +70,7 @@ def main():
             print(f"LIMA [{pct}%]: {msg}", flush=True)
 
         res_lima = pipeline.run_pipeline(
-            job_id=args.name.lower().replace(" ", "_"),
+            job_id=clean_name,
             main_topic=args.topic,
             target_samples=args.target_samples,
             batch_size=args.batch_size,
@@ -176,7 +178,7 @@ Struttura:
         training_results={"train_loss": 0.12},
         evaluation_results={},
         device_used="mps",
-        experiment_id=args.name.lower().replace(" ", "_")
+        experiment_id=clean_name
     )
     print("PROGRESS: 100", flush=True)
     print("🎉 Pipeline Forge Completata con Successo!", flush=True)

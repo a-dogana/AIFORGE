@@ -110,7 +110,14 @@ class LIMAStagingManager:
         self.staging_dir = staging_dir
         os.makedirs(self.staging_dir, exist_ok=True)
 
+    def _validate_job_id(self, job_id: str) -> None:
+        if not job_id or not isinstance(job_id, str):
+            raise ValueError("Invalid job_id: must be a non-empty string.")
+        if ".." in job_id or "/" in job_id or "\\" in job_id:
+            raise ValueError(f"Path traversal detected in job_id: {job_id}")
+
     def get_paths(self, job_id: str) -> Tuple[str, str]:
+        self._validate_job_id(job_id)
         jsonl_path = os.path.join(self.staging_dir, f"{job_id}.jsonl")
         meta_path = os.path.join(self.staging_dir, f"{job_id}.meta.json")
         return jsonl_path, meta_path

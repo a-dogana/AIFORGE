@@ -105,21 +105,20 @@ def test_soup_backend_train_mocked(tmp_path):
 
     backend = SoupBackend(cfg)
     
-    with patch("subprocess.Popen") as mock_popen, patch("subprocess.run") as mock_run:
-        # Mock version call
-        mock_run.return_value = MagicMock(stdout="Soup 1.0.0\n")
-        
-        # Mock training execution
-        mock_process = MagicMock()
-        mock_process.stdout.readline.side_effect = [
-            b"Starting Soup training...\n",
-            b"Epoch 1/3 - loss: 0.25\n",
-            b""
-        ]
-        mock_process.poll.return_value = 0
-        mock_popen.return_value = mock_process
+    def fake_run(cmd, *args, **kwargs):
+        if "train" in cmd:
+            # Simulate Soup writing an adapter to the configured output dir
+            import yaml
+            cfg_path = cmd[cmd.index("--config") + 1]
+            with open(cfg_path) as f:
+                out_dir = yaml.safe_load(f)["output"]
+            os.makedirs(out_dir, exist_ok=True)
+            open(os.path.join(out_dir, "adapter_model.safetensors"), "w").close()
+            return MagicMock(stdout="Epoch 1/3 - loss: 0.25\n", returncode=0)
+        return MagicMock(stdout="Soup 1.0.0\n", returncode=0)
 
+    with patch("subprocess.run", side_effect=fake_run):
         res = backend.train("datasets/sample.jsonl")
         assert "checkpoint_path" in res
-        assert "soup_version" in res
+        assert res["soup_version"] == "Soup 1.0.0"
         assert res["backend"] == "soup"

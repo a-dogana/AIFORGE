@@ -1,3 +1,0 @@
-aiforge
-aiforge_cli
-tests

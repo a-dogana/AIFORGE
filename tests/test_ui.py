@@ -66,7 +66,7 @@ def test_ui_api_generate_offline(monkeypatch):
         # Assuming server is offline in test env
         res = client.post("/api/generate", json={"prompt": "test", "max_new_tokens": 10})
         assert res.status_code == 503
-        assert "offline" in res.json()["detail"].lower()
+        assert "non raggiungibile" in res.json()["detail"].lower()
         
         # Test validation
         res_val = client.post("/api/generate", json={"prompt": "test", "max_new_tokens": "invalid"})

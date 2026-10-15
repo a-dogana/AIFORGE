@@ -350,8 +350,8 @@ class LLMEngine:
                 expected = example.get("output", "")
                 
                 generated = self.generate(prompt, max_new_tokens=50)
-                # Cleanup generated
-                generated_clean = generated[len(prompt):].strip()
+                # generate() already returns only the newly generated tokens
+                generated_clean = generated.strip()
                 expected_clean = expected.strip()
                 
                 match = (generated_clean == expected_clean)

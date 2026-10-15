@@ -16,6 +16,8 @@ import random
 import re
 from typing import List, Dict, Any, Optional, Tuple, Callable
 
+from aiforge.data.json_utils import parse_llm_json
+
 
 class LIMAQualityFilter:
     """
@@ -40,6 +42,10 @@ class LIMAQualityFilter:
         intersection = len(set1.intersection(set2))
         union = len(set1.union(set2))
         return intersection / float(union) if union > 0 else 0.0
+
+    @classmethod
+    def _is_near_duplicate(cls, text: str, seen: List[str], threshold: float) -> bool:
+        return any(cls.jaccard_similarity(text, prev) >= threshold for prev in seen)
 
     @classmethod
     def filter_samples(
@@ -89,14 +95,7 @@ class LIMAQualityFilter:
                     continue
 
                 # Check duplicate against previous prompts
-                is_duplicate = False
-                for prev_inst in seen_instructions:
-                    sim = cls.jaccard_similarity(user_first, prev_inst)
-                    if sim >= max_similarity_threshold:
-                        is_duplicate = True
-                        break
-
-                if is_duplicate:
+                if cls._is_near_duplicate(user_first, seen_instructions, max_similarity_threshold):
                     duplicates_count += 1
                     continue
 
@@ -116,14 +115,7 @@ class LIMAQualityFilter:
                     continue
 
                 # Check near-duplicate against already accepted instructions
-                is_duplicate = False
-                for prev_inst in seen_instructions:
-                    sim = cls.jaccard_similarity(instruction, prev_inst)
-                    if sim >= max_similarity_threshold:
-                        is_duplicate = True
-                        break
-
-                if is_duplicate:
+                if cls._is_near_duplicate(instruction, seen_instructions, max_similarity_threshold):
                     duplicates_count += 1
                     continue
 
@@ -248,14 +240,9 @@ Rispondi ESCLUSIVAMENTE con un array JSON di stringhe. Esempio:
 ["Sotto-argomento 1", "Sotto-argomento 2"]"""
 
         response = self._call_llm_with_retry(prompt)
-        text = response.strip()
-        if text.startswith("```json"): text = text[7:]
-        if text.startswith("```"): text = text[3:]
-        if text.endswith("```"): text = text[:-3]
-        text = text.strip()
 
         try:
-            subtopics = json.loads(text)
+            subtopics = parse_llm_json(response)
             if isinstance(subtopics, list) and len(subtopics) > 0:
                 return [str(s).strip() for s in subtopics if str(s).strip()]
         except Exception:
@@ -309,13 +296,7 @@ Formato:
 
             try:
                 response = self._call_llm_with_retry(prompt)
-                text = response.strip()
-                if text.startswith("```json"): text = text[7:]
-                if text.startswith("```"): text = text[3:]
-                if text.endswith("```"): text = text[:-3]
-                text = text.strip()
-
-                items = json.loads(text)
+                items = parse_llm_json(response)
                 if isinstance(items, list):
                     for it in items:
                         if not isinstance(it, dict):

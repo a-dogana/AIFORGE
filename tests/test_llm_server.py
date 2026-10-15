@@ -10,7 +10,7 @@ def test_llm_server_validation():
         # Should be unavailable
         assert client.post("/v1/generate", json={"prompt": "test"}).status_code == 503
         
-def test_llm_server_limits(tmp_path):
+def test_llm_server_limits(tmp_path, monkeypatch):
     from aiforge.core.config import ExperimentConfig
     from aiforge.llm.engine import LLMEngine
     
@@ -36,7 +36,7 @@ def test_llm_server_limits(tmp_path):
     }
     config = ExperimentConfig(**config_dict)
     
-    os.environ["AIFORGE_LLM_CONFIG"] = str(tmp_path / "cfg.yaml")
+    monkeypatch.setenv("AIFORGE_LLM_CONFIG", str(tmp_path / "cfg.yaml"))
     with open(tmp_path / "cfg.yaml", "w") as f:
         import yaml
         yaml.dump(config_dict, f)
@@ -51,8 +51,8 @@ def test_llm_server_limits(tmp_path):
         # assert resp.status_code == 200
         # assert "inference_ms" in resp.json()
         
-        # Test over limit tokens
-        resp = client.post("/v1/generate", json={"prompt": "def x():", "max_new_tokens": 1024})
+        # Test over limit tokens (server limit is 2048)
+        resp = client.post("/v1/generate", json={"prompt": "def x():", "max_new_tokens": 4096})
         assert resp.status_code == 422 # Pydantic validation error
         
         # Test negative temp

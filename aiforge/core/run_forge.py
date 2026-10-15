@@ -10,6 +10,7 @@ from aiforge.core.secrets import get_secret
 from aiforge.core.config import ExperimentConfig
 from aiforge.llm.backends.soup import SoupBackend
 from aiforge.experiments.registry import ExperimentRegistry
+from aiforge.data.json_utils import parse_llm_json
 
 
 def resolve_soup_env() -> str:
@@ -130,6 +131,7 @@ Struttura:
                 print(f"✅ Generazione riuscita con {target_model} (OpenAI Compatible)!", flush=True)
                 break
             except Exception as err:
+                print(f"⚠️ {target_model} non disponibile: {err}", flush=True)
                 time.sleep(2)
 
         if not response:
@@ -138,13 +140,7 @@ Struttura:
 
         print("PROGRESS: 40", flush=True)
         try:
-            raw_text = response.choices[0].message.content.strip()
-            if raw_text.startswith("```json"): raw_text = raw_text[7:]
-            if raw_text.startswith("```"): raw_text = raw_text[3:]
-            if raw_text.endswith("```"): raw_text = raw_text[:-3]
-            raw_text = raw_text.strip()
-
-            items = json.loads(raw_text)
+            items = parse_llm_json(response.choices[0].message.content or "")
             os.makedirs("datasets", exist_ok=True)
             with open(dataset_path, "w", encoding="utf-8") as f:
                 for item in items:
@@ -201,13 +197,17 @@ Struttura:
 
     print("6. Registrazione nell'AIFORGE Registry...", flush=True)
     registry = ExperimentRegistry("registry")
-    registry.save_experiment(
+    exp_id = registry.save_experiment(
         config=cfg,
-        training_results={"train_loss": 0.12},
+        training_results={"history": res.get("history", {}), "soup_version": res.get("soup_version")},
         evaluation_results={},
         device_used="mps",
         experiment_id=clean_name
     )
+    # Soup produces a PEFT adapter directory, not a .pt state dict: link it explicitly
+    record = registry.get_experiment_record(exp_id)
+    record["checkpoint_path"] = adapter_path
+    registry.save_experiment_record(exp_id, record)
     print("PROGRESS: 100", flush=True)
     print("🎉 Pipeline Forge Completata con Successo!", flush=True)
 
@@ -227,10 +227,9 @@ def run_lima_generate(args):
     print(f"Target Samples: {target_samples} (Micro-batch: {batch_size})")
     print(f"Output File: {output_path}")
 
-    client = get_llm_client()
+    client, conn_model = get_llm_client()
     from aiforge.data.lima_pipeline import LIMAPipeline
-    candidates = ["gemini-3.8-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
-    target_model = getattr(args, "model", None) or candidates[0]
+    target_model = getattr(args, "model", None) or conn_model or "gemini-3.8-flash"
     
     pipeline = LIMAPipeline(
         client=client,

@@ -114,6 +114,7 @@ class SoupBackend:
             raise FileNotFoundError(f"Soup did not produce any output in {output_dir}")
             
         return {
+            "backend": "soup",
             "history": {"train_loss": [], "val_loss": []},
             "test_results": {},
             "checkpoint_path": output_dir,

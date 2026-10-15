@@ -21,3 +21,6 @@ datasets/staging/
 *.key
 .vscode/
 .idea/
+logs/
+venv_soup
+*_id.txt

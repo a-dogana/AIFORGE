@@ -136,6 +136,13 @@ class NF4QuantizedLinear(nn.Module):
             self.register_parameter("lora_B", None)
             self.dropout = nn.Identity()
 
+        self._cached_dequant_w = None
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if mode:
+            self._cached_dequant_w = None
+
     @classmethod
     def from_linear(
         cls,
@@ -213,15 +220,27 @@ class NF4QuantizedLinear(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        w = self.dequantize(dtype=x.dtype)
-        bias = self.bias_val.to(x.dtype) if self.bias_val is not None else None
+        cached = getattr(self, "_cached_dequant_w", None)
+        if not self.training:
+            if (
+                cached is None 
+                or cached.dtype != x.dtype 
+                or cached.device != x.device
+            ):
+                cached = self.dequantize(dtype=x.dtype).to(device=x.device, dtype=x.dtype)
+                self._cached_dequant_w = cached
+            w = cached
+        else:
+            w = self.dequantize(dtype=x.dtype).to(device=x.device, dtype=x.dtype)
+
+        bias = self.bias_val.to(device=x.device, dtype=x.dtype) if self.bias_val is not None else None
         out = torch.nn.functional.linear(x, w, bias)
 
         if self.lora_r > 0 and self.lora_A is not None:
             # LoRA delta: (x * dropout) @ A @ B * scaling
             drop_x = self.dropout(x)
-            lora_a = self.lora_A.to(x.dtype)
-            lora_b = self.lora_B.to(x.dtype)
+            lora_a = self.lora_A.to(device=x.device, dtype=x.dtype)
+            lora_b = self.lora_B.to(device=x.device, dtype=x.dtype)
             lora_out = (drop_x @ lora_a) @ lora_b
             out = out + (lora_out * self.scaling)
 

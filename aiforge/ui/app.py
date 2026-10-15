@@ -1,6 +1,16 @@
 import os
 if "SSL_CERT_FILE" in os.environ and not os.path.exists(os.environ["SSL_CERT_FILE"]):
     del os.environ["SSL_CERT_FILE"]
+
+try:
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft < 10240:
+        target = min(10240, hard) if hard > 0 else 10240
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+except Exception:
+    pass
+
 import httpx
 from aiforge.core.merge_lab import MergeLab, MergeRequest
 from fastapi import FastAPI, HTTPException
@@ -9,9 +19,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import subprocess
+import sys
+import logging
 import yaml
 import json
 import time
+
+logger = logging.getLogger("aiforge.ui")
 
 from aiforge.experiments.registry import ExperimentRegistry
 
@@ -26,7 +40,7 @@ llm_server_process = None
 
 class GenerateRequest(BaseModel):
     prompt: str
-    max_new_tokens: int = Field(50, ge=1, le=512)
+    max_new_tokens: int = Field(512, ge=1, le=2048)
     temperature: float = Field(0.7, ge=0.0, le=2.0)
 
 class StartServerRequest(BaseModel):
@@ -58,7 +72,7 @@ def start_server(req: StartServerRequest):
         temp_config_path = f".tmp_config_base.yaml"
         with open(temp_config_path, "w") as f:
             yaml.dump(config, f)
-        cmd = ["aiforge", "serve-llm", "--config", temp_config_path, "--port", "8001"]
+        cmd = [sys.executable, "-m", "aiforge_cli", "serve-llm", "--config", temp_config_path, "--port", "8001"]
     else:
         exp = registry.get_experiment_record(req.experiment_id)
         if not exp:
@@ -76,19 +90,32 @@ def start_server(req: StartServerRequest):
         if adapter_path and adapter_path.endswith(".pt"):
             adapter_path = os.path.dirname(adapter_path)
         
-        cmd = ["aiforge", "serve-llm", "--config", temp_config_path, "--port", "8001"]
+        cmd = [sys.executable, "-m", "aiforge_cli", "serve-llm", "--config", temp_config_path, "--port", "8001"]
         if adapter_path and os.path.exists(adapter_path):
             cmd.extend(["--adapter", adapter_path])
         
     try:
-        llm_server_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Clean up any lingering process on port 8001 before starting fresh
+        try:
+            pid_bytes = subprocess.check_output(["lsof", "-ti:8001"], stderr=subprocess.DEVNULL)
+            for pid_str in pid_bytes.decode().strip().split():
+                if pid_str.isdigit() and int(pid_str) != os.getpid():
+                    os.kill(int(pid_str), 9)
+        except Exception:
+            pass
+
+        os.makedirs("logs", exist_ok=True)
+        log_file = open("logs/llm_server.log", "a")
+        llm_server_process = subprocess.Popen(cmd, stdout=log_file, stderr=log_file)
         return {"status": "starting"}
     except Exception as e:
+        logger.error(f"Failed to launch LLM server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/server/stop")
 def stop_server():
     global llm_server_process
+    stopped = False
     if llm_server_process is not None:
         try:
             llm_server_process.terminate()
@@ -100,8 +127,19 @@ def stop_server():
             pass
         finally:
             llm_server_process = None
-        return {"status": "stopped"}
-    return {"status": "not running"}
+        stopped = True
+
+    # Also clean up any lingering process on port 8001
+    try:
+        pid_bytes = subprocess.check_output(["lsof", "-ti:8001"], stderr=subprocess.DEVNULL)
+        for pid_str in pid_bytes.decode().strip().split():
+            if pid_str.isdigit() and int(pid_str) != os.getpid():
+                os.kill(int(pid_str), 9)
+                stopped = True
+    except Exception:
+        pass
+
+    return {"status": "stopped" if stopped else "not running"}
 
 @app.get("/api/status")
 def get_status():
@@ -152,13 +190,17 @@ async def generate_text(req: GenerateRequest):
             resp = await client.post(
                 "http://127.0.0.1:8001/v1/generate",
                 json=req.model_dump(),
-                timeout=30.0
+                timeout=180.0
             )
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
             return resp.json()
-    except httpx.RequestError:
-        raise HTTPException(status_code=503, detail="LLM Server is offline. Start it with 'aiforge serve-llm'.")
+    except httpx.RequestError as e:
+        logger.error(f"Generate proxy error: {type(e).__name__} - {e}")
+        raise HTTPException(
+            status_code=503, 
+            detail=f"LLM Server non raggiungibile sulla porta 8001 ({type(e).__name__}). Se è in fase di avvio, attendi qualche secondo."
+        )
 
 from fastapi.middleware.cors import CORSMiddleware
 from aiforge.core.merge_lab import MergeLab, MergeRequest
@@ -215,6 +257,7 @@ class ConnectorConfig(BaseModel):
     id: str
     name: str
     base_url: str
+    model: Optional[str] = "gemini-1.5-flash"
     api_key: Optional[str] = None
 
 @app.get("/api/connectors")
@@ -223,9 +266,9 @@ def get_connectors():
     if not os.path.exists(connectors_path):
         # Default connectors
         return [
-            {"id": "google", "name": "Google Gemini (OpenAI Std)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "has_key": has_secret("google")},
-            {"id": "openai", "name": "OpenAI Default", "base_url": "https://api.openai.com/v1", "has_key": has_secret("openai")},
-            {"id": "anthropic", "name": "Anthropic (via Proxy)", "base_url": "", "has_key": has_secret("anthropic")}
+            {"id": "google", "name": "Google Gemini (OpenAI Std)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-1.5-flash", "has_key": has_secret("google")},
+            {"id": "openai", "name": "OpenAI Default", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "has_key": has_secret("openai")},
+            {"id": "anthropic", "name": "Anthropic (via Proxy)", "base_url": "", "model": "claude-3-5-sonnet", "has_key": has_secret("anthropic")}
         ]
     
     with open(connectors_path, "r") as f:
@@ -233,6 +276,8 @@ def get_connectors():
     
     for c in data:
         c["has_key"] = has_secret(c["id"])
+        if "model" not in c or not c["model"]:
+            c["model"] = "gemini-1.5-flash" if c["id"] == "google" else ("gpt-4o-mini" if c["id"] == "openai" else "local-model")
     return data
 
 @app.post("/api/connectors")
@@ -253,10 +298,11 @@ def save_connector(conn: ConnectorConfig, request: Request):
         if c["id"] == conn.id:
             data[i]["name"] = conn.name
             data[i]["base_url"] = conn.base_url
+            data[i]["model"] = conn.model or "gemini-1.5-flash"
             updated = True
             break
     if not updated:
-        data.append({"id": conn.id, "name": conn.name, "base_url": conn.base_url})
+        data.append({"id": conn.id, "name": conn.name, "base_url": conn.base_url, "model": conn.model or "gemini-1.5-flash"})
         
     with open(connectors_path, "w") as f:
         json.dump(data, f, indent=2)

@@ -13,7 +13,7 @@ from aiforge.llm.engine import LLMEngine
 # --- Models ---
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., description="Prompt to generate text for.", max_length=2000)
-    max_new_tokens: int = Field(50, description="Max tokens to generate.", gt=0, le=512)
+    max_new_tokens: int = Field(512, description="Max tokens to generate.", gt=0, le=2048)
     temperature: float = Field(0.7, description="Sampling temperature.", ge=0.0, le=2.0)
 
 class GenerateResponse(BaseModel):
@@ -79,14 +79,18 @@ def generate_text(request: GenerateRequest):
         )
         latency = (time.time() - start) * 1000
         state.req_count += 1
+        logger.info(f"Generated output in {latency:.1f}ms for prompt: '{request.prompt[:50]}'")
         return GenerateResponse(text=out_text, model_version=state.model_id, inference_ms=latency)
     except ValueError as ve:
         state.err_count += 1
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
+        import traceback
         state.err_count += 1
-        logger.error(f"Generation failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during generation.")
+        trace = traceback.format_exc()
+        logger.error(f"Generation failed: {e}\n{trace}")
+        print(f"ERROR Generation failed: {e}\n{trace}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=f"Generation error ({type(e).__name__}): {e}")
 
 def run_llm_server(config_path: str, adapter_dir: Optional[str] = None, host: str = "127.0.0.1", port: int = 8000):
     import uvicorn

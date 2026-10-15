@@ -268,9 +268,16 @@ Rispondi ESCLUSIVAMENTE con un array JSON di stringhe. Esempio:
         """
         Step 2: Generates a small micro-batch of structured examples for a specific sub-topic.
         Supports 'single_turn' (instruction/output) and 'multi_turn' (conversational dialogues).
+        Chunks large requests into micro-batches of max 5 samples to prevent token truncation and API timeouts.
         """
-        if turn_type == "multi_turn":
-            prompt = f"""Crea {count} conversazioni didattiche multi-turno di alta qualità per il seguente sotto-argomento:
+        chunk_size = 5
+        total_valid: List[Dict[str, Any]] = []
+        remaining = max(1, count)
+
+        while remaining > 0:
+            current_chunk = min(remaining, chunk_size)
+            if turn_type == "multi_turn":
+                prompt = f"""Crea {current_chunk} conversazioni didattiche multi-turno di alta qualità per il seguente sotto-argomento:
 "{subtopic}"
 
 Ogni conversazione deve avere almeno 2 o 3 turni di interazione (domanda iniziale, risposta approfondita, domanda di follow-up o caso limite, e risposta finale con codice o dettagli tecnici).
@@ -286,8 +293,8 @@ Formato:
     ]
   }}
 ]"""
-        else:
-            prompt = f"""Crea {count} esempi didattici avanzati di alta qualità secondo la metodologia LIMA (istruzione chiara, non ambigua, con risposta completa, approfondita e priva di errori) per il seguente sotto-argomento:
+            else:
+                prompt = f"""Crea {current_chunk} esempi didattici avanzati di alta qualità secondo la metodologia LIMA (istruzione chiara, non ambigua, con risposta completa, approfondita e priva di errori) per il seguente sotto-argomento:
 "{subtopic}"
 
 Rispondi ESCLUSIVAMENTE con un array JSON valido. Nessun markdown o testo introduttivo.
@@ -300,29 +307,29 @@ Formato:
   }}
 ]"""
 
-        response = self._call_llm_with_retry(prompt)
-        text = response.strip()
-        if text.startswith("```json"): text = text[7:]
-        if text.startswith("```"): text = text[3:]
-        if text.endswith("```"): text = text[:-3]
-        text = text.strip()
+            try:
+                response = self._call_llm_with_retry(prompt)
+                text = response.strip()
+                if text.startswith("```json"): text = text[7:]
+                if text.startswith("```"): text = text[3:]
+                if text.endswith("```"): text = text[:-3]
+                text = text.strip()
 
-        try:
-            items = json.loads(text)
-            if isinstance(items, list):
-                valid = []
-                for it in items:
-                    if not isinstance(it, dict):
-                        continue
-                    if turn_type == "multi_turn" and ("messages" in it or "turns" in it):
-                        valid.append(it)
-                    elif turn_type != "multi_turn" and "instruction" in it and "output" in it:
-                        valid.append(it)
-                return valid
-        except Exception:
-            pass
+                items = json.loads(text)
+                if isinstance(items, list):
+                    for it in items:
+                        if not isinstance(it, dict):
+                            continue
+                        if turn_type == "multi_turn" and ("messages" in it or "turns" in it):
+                            total_valid.append(it)
+                        elif turn_type != "multi_turn" and "instruction" in it and "output" in it:
+                            total_valid.append(it)
+            except Exception as e:
+                print(f"⚠️ Errore nel parsing del sotto-blocco JSON: {e}", flush=True)
 
-        return []
+            remaining -= current_chunk
+
+        return total_valid
 
     def _call_llm_with_retry(self, prompt: str) -> str:
         """
@@ -345,9 +352,11 @@ Formato:
                 is_rate_limit = "429" in err_str or "rate limit" in err_str or "quota" in err_str or "overloaded" in err_str
                 retries += 1
                 if retries > self.max_retries:
+                    print(f"❌ Errore critico LLM: superato il limite di {self.max_retries} tentativi ({e})", flush=True)
                     raise RuntimeError(f"Chiamata LLM fallita dopo {self.max_retries} tentativi: {e}")
 
                 sleep_time = backoff + random.uniform(0.5, 1.5)
+                print(f"⏳ Connessione o Quota ({retries}/{self.max_retries}): attesa {sleep_time:.1f}s prima di riprovare...", flush=True)
                 time.sleep(sleep_time)
                 backoff *= 2.0
 
@@ -381,27 +390,33 @@ Formato:
         num_subtopics_needed = math.ceil(needed_samples / float(batch_size))
         
         if needed_samples > 0:
-            report(15, f"Fase 1: Generazione albero tassonomico per '{main_topic}'...")
-            taxonomy = self.generate_taxonomy(main_topic, target_subtopics=max(5, num_subtopics_needed))
-            
-            # Filter out already completed subtopics
-            pending_subtopics = [s for s in taxonomy if s not in completed_subtopics]
-            total_steps = len(pending_subtopics)
+            try:
+                report(15, f"Fase 1: Generazione albero tassonomico per '{main_topic}'...")
+                taxonomy = self.generate_taxonomy(main_topic, target_subtopics=max(5, num_subtopics_needed))
+                
+                # Filter out already completed subtopics
+                pending_subtopics = [s for s in taxonomy if s not in completed_subtopics]
+                total_steps = len(pending_subtopics)
 
-            report(25, f"Tassonomia pronta con {len(taxonomy)} sotto-argomenti. Inizio micro-batch...")
+                report(25, f"Tassonomia pronta con {len(taxonomy)} sotto-argomenti. Inizio micro-batch...")
 
-            for i, subtopic in enumerate(pending_subtopics):
-                if len(staged_samples) >= target_samples:
-                    break
+                for i, subtopic in enumerate(pending_subtopics):
+                    if len(staged_samples) >= target_samples:
+                        break
 
-                step_pct = int(25 + ((i + 1) / max(1, total_steps)) * 50)
-                report(step_pct, f"Generazione micro-batch ({i+1}/{total_steps}): {subtopic}...")
+                    step_pct = int(25 + ((i + 1) / max(1, total_steps)) * 50)
+                    report(step_pct, f"Generazione micro-batch ({i+1}/{total_steps}): {subtopic}...")
 
-                batch_items = self.generate_micro_batch(subtopic, count=batch_size, turn_type=turn_type)
-                if batch_items:
-                    self.staging.append_batch(job_id, subtopic, batch_items)
-                    staged_samples.extend(batch_items)
-                    report(step_pct, f"Accreditati {len(batch_items)} campioni in staging ({len(staged_samples)}/{target_samples}).")
+                    batch_items = self.generate_micro_batch(subtopic, count=batch_size, turn_type=turn_type)
+                    if batch_items:
+                        self.staging.append_batch(job_id, subtopic, batch_items)
+                        staged_samples.extend(batch_items)
+                        report(step_pct, f"Accreditati {len(batch_items)} campioni in staging ({len(staged_samples)}/{target_samples}).")
+            except Exception as e:
+                if len(staged_samples) >= 15:
+                    report(75, f"⚠️ Quota API esaurita ({e}). Procedo con il salvataggio e addestramento dei {len(staged_samples)} campioni già presenti nello staging!")
+                else:
+                    raise
 
         report(80, "Fase 3: Applicazione LIMA Quality Gate (Deduplicazione e Sintassi in Locale)...")
         

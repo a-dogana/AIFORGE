@@ -14,3 +14,10 @@ debug_soup_out/
 *.log
 .tmp_*
 datasets/staging/
+.env
+.env.*
+.DS_Store
+*.pem
+*.key
+.vscode/
+.idea/

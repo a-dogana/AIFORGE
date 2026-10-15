@@ -16,7 +16,7 @@ function aiforgeApp() {
 
         // Chat Playground
         chatMessages: [
-            { sender: 'ai', text: 'Ciao! Sono il tuo modello locale specializzato. Chiedimi di scrivere o spiegare codice C o qualsiasi altro algoritmo.' }
+            { sender: 'ai', text: 'Ciao! Sono il tuo assistente IA locale specializzato. Chiedimi di scrivere codice, progettare architetture o risolvere problemi tecnici.' }
         ],
         chatPrompt: '',
         chatMaxTokens: 120,
@@ -66,6 +66,7 @@ function aiforgeApp() {
             id: '',
             name: '',
             base_url: 'http://127.0.0.1:11434/v1',
+            model: 'gemini-1.5-flash',
             api_key: ''
         },
         connMsg: '',
@@ -192,14 +193,19 @@ function aiforgeApp() {
             this.chatMessages.push({ sender: 'ai', text: 'Elaborazione sulla GPU Apple Silicon...' });
             const aiMessageIndex = this.chatMessages.length - 1;
 
+            const safeMaxTokens = Math.min(Math.max(parseInt(this.chatMaxTokens) || 512, 16), 2048);
+            this.chatMaxTokens = safeMaxTokens;
+            const safeTemp = Math.min(Math.max(parseFloat(String(this.chatTemperature).replace(',', '.')) || 0.3, 0.0), 2.0);
+            this.chatTemperature = safeTemp;
+
             try {
                 const res = await fetch('/api/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         prompt: text,
-                        max_new_tokens: parseInt(this.chatMaxTokens) || 120,
-                        temperature: parseFloat(this.chatTemperature) || 0.3
+                        max_new_tokens: safeMaxTokens,
+                        temperature: safeTemp
                     })
                 });
 
@@ -210,8 +216,16 @@ function aiforgeApp() {
                     this.chatMessages[aiMessageIndex].text = data.text || data.generated_text || "Nessun output generato.";
                     this.chatLatency = `${latency} ms • ${data.tokens_generated || 'N/A'} tok`;
                 } else {
-                    this.chatMessages[aiMessageIndex].text = "Errore: " + (data.detail || "Generazione non riuscita");
-                    this.chatError = data.detail || "Errore del server";
+                    let errorMsg = "Generazione non riuscita";
+                    if (typeof data.detail === 'string') {
+                        errorMsg = data.detail;
+                    } else if (Array.isArray(data.detail)) {
+                        errorMsg = data.detail.map(d => `${d.loc ? d.loc[d.loc.length - 1] : ''}: ${d.msg}`).join(', ');
+                    } else if (data.detail) {
+                        errorMsg = JSON.stringify(data.detail);
+                    }
+                    this.chatMessages[aiMessageIndex].text = "Errore: " + errorMsg;
+                    this.chatError = errorMsg;
                 }
             } catch (e) {
                 this.chatMessages[aiMessageIndex].text = "Errore di connessione: assicurati che il server LLM sia avviato (porta 8001).";
@@ -498,7 +512,7 @@ function aiforgeApp() {
                 });
                 if (res.ok) {
                     this.connMsg = "Connettore salvato con successo!";
-                    this.newConn = { id: '', name: '', base_url: 'http://127.0.0.1:11434/v1', api_key: '' };
+                    this.newConn = { id: '', name: '', base_url: 'http://127.0.0.1:11434/v1', model: 'gemini-1.5-flash', api_key: '' };
                     await this.loadConnectors();
                 } else {
                     const data = await res.json();
@@ -544,13 +558,13 @@ function aiforgeApp() {
 
         setConnectorPreset(preset) {
             if (preset === 'ollama') {
-                this.newConn = { id: 'ollama_local', name: 'Ollama Locale', base_url: 'http://127.0.0.1:11434/v1', api_key: '' };
+                this.newConn = { id: 'ollama_local', name: 'Ollama Locale', base_url: 'http://127.0.0.1:11434/v1', model: 'llama3.2', api_key: '' };
             } else if (preset === 'lmstudio') {
-                this.newConn = { id: 'lmstudio', name: 'LM Studio Locale', base_url: 'http://127.0.0.1:1234/v1', api_key: '' };
+                this.newConn = { id: 'lmstudio', name: 'LM Studio Locale', base_url: 'http://127.0.0.1:1234/v1', model: 'local-model', api_key: '' };
             } else if (preset === 'gemini') {
-                this.newConn = { id: 'google', name: 'Google Gemini (OpenAI Std)', base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/', api_key: '' };
+                this.newConn = { id: 'google', name: 'Google Gemini (OpenAI Std)', base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-1.5-flash', api_key: '' };
             } else if (preset === 'openai') {
-                this.newConn = { id: 'openai', name: 'OpenAI Cloud', base_url: 'https://api.openai.com/v1', api_key: '' };
+                this.newConn = { id: 'openai', name: 'OpenAI Cloud', base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini', api_key: '' };
             }
         }
     };

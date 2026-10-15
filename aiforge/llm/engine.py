@@ -159,17 +159,30 @@ class LLMEngine:
             
         self.model.eval()
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        input_len = inputs["input_ids"].shape[1]
         
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": self.tokenizer.pad_token_id,
+        }
+        if temperature > 0.05:
+            gen_kwargs["do_sample"] = True
+            gen_kwargs["temperature"] = float(temperature)
+        else:
+            gen_kwargs["do_sample"] = False
+            
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs, 
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=True if temperature > 0 else False,
-                pad_token_id=self.tokenizer.pad_token_id
+                **gen_kwargs
             )
             
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        generated_tokens = outputs[0][input_len:]
+        out_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+        # Fallback if empty
+        if not out_text:
+            out_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        return out_text
 
     def train(self, dataset_path: str):
         if not (self.llm_config.lora_enabled or getattr(self.llm_config, "qlora", False)):

@@ -24,20 +24,21 @@ def resolve_soup_env() -> str:
     if os.path.exists(local_soup):
         return local_soup
 
-    # 3. Known fallback locations
-    fallback = "/Users/alessandrodogana/.gemini/antigravity/brain/177bf045-2b86-412c-a413-1057a8eeec8b/venv_soup"
-    if os.path.exists(fallback):
-        return fallback
+    # 3. User home directory fallback (~/.aiforge/venv_soup)
+    home_soup = os.path.expanduser("~/.aiforge/venv_soup")
+    if os.path.exists(home_soup):
+        return home_soup
 
     # 4. Default to ./venv_soup so error messages are actionable
     return local_soup
 
 
-def get_llm_client() -> OpenAI:
-    """Retrieve an authenticated OpenAI-compatible client from registry or environment."""
+def get_llm_client():
+    """Retrieve an authenticated OpenAI-compatible client and target model from registry or environment."""
     connectors_path = "registry/connectors.json"
     api_key = None
     base_url = "https://api.openai.com/v1"
+    model = None
     
     if os.path.exists(connectors_path):
         with open(connectors_path, "r", encoding="utf-8") as f:
@@ -45,8 +46,9 @@ def get_llm_client() -> OpenAI:
             if connectors:
                 conn = connectors[0]
                 base_url = conn.get("base_url", base_url)
+                model = conn.get("model")
                 api_key = get_secret(conn["id"])
-                print(f"✅ Utilizzo connettore: {conn['name']}", flush=True)
+                print(f"✅ Utilizzo connettore: {conn['name']} (Modello: {model or 'gemini-1.5-flash'})", flush=True)
 
     if not api_key:
         api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -55,7 +57,7 @@ def get_llm_client() -> OpenAI:
         print("❌ Errore: Nessun connettore con API Key trovata. Configuralo nella UI (Connettori API) o esporta OPENAI_API_KEY.", flush=True)
         sys.exit(1)
         
-    return OpenAI(api_key=api_key, base_url=base_url)
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=90.0), model
 
 
 def run_forge_pipeline(args):
@@ -64,15 +66,20 @@ def run_forge_pipeline(args):
 
     print("PROGRESS: 10", flush=True)
     print("1. Caricamento connettore da registry...", flush=True)
-    client = get_llm_client()
+    client, conn_model = get_llm_client()
     
     print("PROGRESS: 20", flush=True)
     clean_name = re.sub(r"[^\w\-]", "_", args.name.strip().lower())
     dataset_path = f"datasets/forge_{clean_name}.jsonl"
-    candidates = ["gemini-3.8-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    
+    chosen_model = getattr(args, "generator_model", None) or conn_model or "gemini-1.5-flash"
+    candidates = [chosen_model]
+    for m in ["gemini-1.5-flash", "gemini-3.8-flash", "gemini-1.5-pro", "gpt-4o-mini"]:
+        if m not in candidates:
+            candidates.append(m)
     
     if args.method == "lima":
-        print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Target: {args.target_samples} campioni)...", flush=True)
+        print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Modello: {candidates[0]}, Target: {args.target_samples} campioni)...", flush=True)
         from aiforge.data.lima_pipeline import LIMAPipeline
         
         target_model = candidates[0]
@@ -260,6 +267,7 @@ def main():
     parser.add_argument("--target-samples", type=int, default=100, help="Target curated samples count for LIMA")
     parser.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
     parser.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")
+    parser.add_argument("--generator-model", default=None, help="Teacher LLM model for data generation (e.g. gemini-1.5-flash)")
     args = parser.parse_args()
 
     run_forge_pipeline(args)

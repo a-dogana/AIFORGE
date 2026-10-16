@@ -7,5 +7,6 @@ numpy
 scikit-learn
 pandas
 psutil
+keyring
 pytest
 pytest-cov

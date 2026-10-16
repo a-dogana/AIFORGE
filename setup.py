@@ -30,6 +30,7 @@ setup(
         "scikit-learn",
         "pandas",
         "psutil",
+        "keyring",
     ],
     extras_require=EXTRAS,
     entry_points={

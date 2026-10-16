@@ -35,7 +35,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from aiforge.core.merge_lab import MergeLab, MergeRequest
-from aiforge.core.secrets import check_plaintext_migration, get_secret, has_secret, save_secret
+from aiforge.core.secrets import (
+    SecretBackendUnavailableError,
+    check_plaintext_migration,
+    get_secret,
+    get_secret_backend_status,
+    has_secret,
+    save_secret,
+)
 from aiforge.experiments.registry import ExperimentRegistry
 
 logger = logging.getLogger("aiforge.ui")
@@ -294,10 +301,34 @@ async def generate_text(req: GenerateRequest):
 
 # --- API keys & connectors -------------------------------------------------
 
+def _safe_has_secret(provider: str) -> bool:
+    try:
+        return has_secret(provider)
+    except SecretBackendUnavailableError:
+        return False
+
+
 @app.get("/api/keys")
 def get_keys():
-    keys = {p: has_secret(p) for p in SECRET_PROVIDERS}
+    backend_info = get_secret_backend_status()
+    keys = {}
+    backend_available = bool(backend_info.get("available", False))
+    backend_error = backend_info.get("error")
+    for p in SECRET_PROVIDERS:
+        if not backend_available:
+            keys[p] = False
+        else:
+            try:
+                keys[p] = has_secret(p)
+            except SecretBackendUnavailableError as e:
+                backend_available = False
+                backend_error = str(e)
+                keys[p] = False
     keys["legacy_plaintext_warning"] = check_plaintext_migration()
+    keys["backend_available"] = backend_available
+    keys["backend"] = backend_info.get("backend", "unknown")
+    if backend_error:
+        keys["backend_error"] = backend_error
     return keys
 
 
@@ -307,12 +338,15 @@ def save_keys(keys: dict, request: Request):
     if request.headers.get("origin", "") not in ALLOWED_ORIGINS:
         raise HTTPException(status_code=403, detail="Invalid Origin header. CSRF protection active.")
 
-    for provider in SECRET_PROVIDERS:
-        val = keys.get(provider)
-        if isinstance(val, str):
-            val = val.strip()
-            if val and val != KEY_PLACEHOLDER:
-                save_secret(provider, val)
+    try:
+        for provider in SECRET_PROVIDERS:
+            val = keys.get(provider)
+            if isinstance(val, str):
+                val = val.strip()
+                if val and val != KEY_PLACEHOLDER:
+                    save_secret(provider, val)
+    except SecretBackendUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {"status": "success"}
 
 
@@ -349,14 +383,14 @@ def _default_model_for(conn_id: str) -> str:
 def get_connectors():
     if not os.path.exists(_connectors_path()):
         return [
-            {"id": "google", "name": "Google Gemini (OpenAI Std)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": DEFAULT_CONNECTOR_MODEL, "has_key": has_secret("google")},
-            {"id": "openai", "name": "OpenAI Default", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "has_key": has_secret("openai")},
-            {"id": "anthropic", "name": "Anthropic (via Proxy)", "base_url": "", "model": "claude-3-5-sonnet", "has_key": has_secret("anthropic")},
+            {"id": "google", "name": "Google Gemini (OpenAI Std)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": DEFAULT_CONNECTOR_MODEL, "has_key": _safe_has_secret("google")},
+            {"id": "openai", "name": "OpenAI Default", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "has_key": _safe_has_secret("openai")},
+            {"id": "anthropic", "name": "Anthropic (via Proxy)", "base_url": "", "model": "claude-3-5-sonnet", "has_key": _safe_has_secret("anthropic")},
         ]
 
     data = _load_connectors()
     for c in data:
-        c["has_key"] = has_secret(c["id"])
+        c["has_key"] = _safe_has_secret(c["id"])
         if not c.get("model"):
             c["model"] = _default_model_for(c["id"])
     return data
@@ -364,6 +398,12 @@ def get_connectors():
 
 @app.post("/api/connectors")
 def save_connector(conn: ConnectorConfig):
+    if conn.api_key and conn.api_key != KEY_PLACEHOLDER:
+        try:
+            save_secret(conn.id, conn.api_key)
+        except SecretBackendUnavailableError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
     data = _load_connectors()
     entry = {"id": conn.id, "name": conn.name, "base_url": conn.base_url, "model": conn.model or DEFAULT_CONNECTOR_MODEL}
     for c in data:
@@ -373,9 +413,6 @@ def save_connector(conn: ConnectorConfig):
     else:
         data.append(entry)
     _save_connectors(data)
-
-    if conn.api_key and conn.api_key != KEY_PLACEHOLDER:
-        save_secret(conn.id, conn.api_key)
     return {"status": "success"}
 
 
@@ -401,7 +438,10 @@ async def test_connector(req: TestConnectorRequest):
 
     key = req.api_key
     if (not key or key == KEY_PLACEHOLDER) and req.id:
-        key = get_secret(req.id)
+        try:
+            key = get_secret(req.id)
+        except SecretBackendUnavailableError as e:
+            return {"status": "error", "message": f"Credential store non disponibile: {e}"}
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     base = req.base_url.rstrip("/")

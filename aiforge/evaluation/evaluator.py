@@ -30,13 +30,28 @@ class EvaluationEngine:
                 all_targets.extend(targets.cpu().numpy())
                 all_predictions.extend(predicted.cpu().numpy())
                 
+        if not all_targets:
+            print("\n--- Evaluation Results ---")
+            print("Warning: Test set is empty. Evaluation status: UNKNOWN")
+            return {
+                "accuracy": None,
+                "classification_report": {},
+                "confusion_matrix": [],
+                "release_gate": "UNKNOWN",
+            }
+
         # Calculate metrics
         report = classification_report(all_targets, all_predictions, output_dict=True, zero_division=0)
         cm = confusion_matrix(all_targets, all_predictions).tolist()
         
-        accuracy = report["accuracy"]
+        import math
+        raw_acc = report.get("accuracy")
+        accuracy = float(raw_acc) if raw_acc is not None and math.isfinite(float(raw_acc)) else None
         print(f"\n--- Evaluation Results ---")
-        print(f"Test Accuracy: {accuracy:.4f}")
+        if accuracy is not None:
+            print(f"Test Accuracy: {accuracy:.4f}")
+        else:
+            print("Test Accuracy: UNKNOWN")
         
         return {
             "accuracy": accuracy,

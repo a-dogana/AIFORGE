@@ -180,18 +180,50 @@ class LLMEngine:
             
         self.model.to(self.device)
 
-    def generate(self, prompt: str, max_new_tokens: int = 50, temperature: float = 0.7) -> str:
+    def generate(
+        self,
+        prompt: str,
+        max_new_tokens: int = 50,
+        temperature: float = 0.7,
+        messages: Optional[ list ] = None,
+    ) -> str:
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Model and tokenizer must be loaded before generation.")
             
         self.model.eval()
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        rendered_prompt = prompt
+        if messages is not None:
+            from aiforge.llm.sft_data import ensure_chat_template
+            ensure_chat_template(self.tokenizer)
+            rendered_prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        elif getattr(self.tokenizer, "chat_template", None) and not any(
+            marker in prompt for marker in ("<|im_start|>", "[INST]", "<|begin_of_text|>", "<|user|>")
+        ):
+            try:
+                rendered_prompt = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                rendered_prompt = prompt
+
+        raw_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
+        inputs = (
+            raw_inputs.to(self.device)
+            if hasattr(raw_inputs, "to")
+            else {k: v.to(self.device) for k, v in raw_inputs.items()}
+        )
         input_len = inputs["input_ids"].shape[1]
         
         gen_kwargs = {
             "max_new_tokens": max_new_tokens,
             "pad_token_id": self.tokenizer.pad_token_id,
         }
+        if getattr(self.tokenizer, "eos_token_id", None) is not None:
+            gen_kwargs["eos_token_id"] = self.tokenizer.eos_token_id
         if temperature > 0.05:
             gen_kwargs["do_sample"] = True
             gen_kwargs["temperature"] = float(temperature)
@@ -211,6 +243,37 @@ class LLMEngine:
             out_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
         return out_text
 
+    def _encode_sft_dataset(self, raw_rows):
+        """Validate schema and encode all rows using the shared SFT chat-template encoder."""
+        from aiforge.llm.sft_data import (
+            CHATML_TEMPLATE,
+            detect_dataset_schema,
+            encode_example,
+            ensure_chat_template,
+        )
+
+        schema = detect_dataset_schema(raw_rows)
+        custom_tpl = (self.config.backend_args or {}).get("chat_template")
+        if custom_tpl and custom_tpl not in ("auto", "chatml"):
+            self.tokenizer.chat_template = custom_tpl
+        elif custom_tpl == "chatml" and not getattr(self.tokenizer, "chat_template", None):
+            self.tokenizer.chat_template = CHATML_TEMPLATE
+        else:
+            ensure_chat_template(self.tokenizer)
+
+        encoded_rows = []
+        for idx, ex in enumerate(raw_rows):
+            enc = encode_example(self.tokenizer, ex, self.llm_config.max_seq_length)
+            encoded_rows.append(
+                {
+                    "input_ids": enc["input_ids"],
+                    "attention_mask": enc["attention_mask"],
+                    "labels": enc["labels"],
+                    "_raw_index": idx,
+                }
+            )
+        return schema, encoded_rows
+
     def train(self, dataset_path: str):
         if not (self.llm_config.lora_enabled or getattr(self.llm_config, "qlora", False)):
             raise ValueError("Training requires LoRA or QLoRA to be enabled to protect base weights.")
@@ -222,60 +285,35 @@ class LLMEngine:
         print(f"Loading dataset from {dataset_path}...")
         dataset = load_dataset('json', data_files=dataset_path, split='train')
         
-        # Determine train/val/test split
-        # We need a proper split. Let's do 80/10/10.
         if len(dataset) < 3:
             raise ValueError("Dataset is too small to split into train/val/test.")
             
-        # Optional: shuffle dataset
         dataset = dataset.shuffle(seed=self.config.seed)
+        raw_list = [dataset[i] for i in range(len(dataset))]
+        schema, encoded_all = self._encode_sft_dataset(raw_list)
+        print(f"Detected SFT dataset schema: '{schema}' ({len(encoded_all)} examples)")
+
+        train_size = max(1, int(0.8 * len(encoded_all)))
+        val_size = max(1, int(0.1 * len(encoded_all)))
         
-        train_size = max(1, int(0.8 * len(dataset)))
-        val_size = max(1, int(0.1 * len(dataset)))
-        
-        train_ds = dataset.select(range(train_size))
-        val_ds = dataset.select(range(train_size, min(len(dataset), train_size + val_size)))
+        train_encoded = encoded_all[:train_size]
+        val_encoded = encoded_all[train_size : min(len(encoded_all), train_size + val_size)]
         
         test_start = train_size + val_size
-        if test_start < len(dataset):
-            test_ds = dataset.select(range(test_start, len(dataset)))
+        if test_start < len(encoded_all):
+            test_indices = [x["_raw_index"] for x in encoded_all[test_start:]]
+            test_ds = [raw_list[i] for i in test_indices]
         else:
-            # Fallback for tiny datasets
-            test_ds = dataset.select(range(0))
+            test_ds = []
             
-        print(f"Dataset splits: Train={len(train_ds)}, Val={len(val_ds)}, Test={len(test_ds)}")
-        
-        def tokenize_and_mask(example):
-            # Format: instruction + input -> output
-            prompt = example.get("instruction", "") + "\n" + example.get("input", "")
-            response = example.get("output", "")
-            
-            full_text = prompt + "\n" + response + self.tokenizer.eos_token
-            
-            # Tokenize prompt and full text
-            prompt_tokens = self.tokenizer(prompt, truncation=True, max_length=self.llm_config.max_seq_length)["input_ids"]
-            full_tokens = self.tokenizer(full_text, truncation=True, max_length=self.llm_config.max_seq_length)
-            
-            input_ids = full_tokens["input_ids"]
-            attention_mask = full_tokens["attention_mask"]
-            
-            # Mask the prompt part in labels
-            labels = input_ids.copy()
-            prompt_len = len(prompt_tokens)
-            for i in range(min(prompt_len, len(labels))):
-                labels[i] = -100
-                
-            return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
-            
-        train_encoded = train_ds.map(tokenize_and_mask, remove_columns=train_ds.column_names)
-        val_encoded = val_ds.map(tokenize_and_mask, remove_columns=val_ds.column_names)
+        print(f"Dataset splits: Train={len(train_encoded)}, Val={len(val_encoded)}, Test={len(test_ds)}")
         
         from torch.utils.data import DataLoader
         
         def collate_fn(batch):
-            input_ids = [torch.tensor(x["input_ids"]) for x in batch]
-            attention_mask = [torch.tensor(x["attention_mask"]) for x in batch]
-            labels = [torch.tensor(x["labels"]) for x in batch]
+            input_ids = [torch.tensor(x["input_ids"], dtype=torch.long) for x in batch]
+            attention_mask = [torch.tensor(x["attention_mask"], dtype=torch.long) for x in batch]
+            labels = [torch.tensor(x["labels"], dtype=torch.long) for x in batch]
             
             # Pad
             input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
@@ -364,20 +402,24 @@ class LLMEngine:
         print("Evaluating on test set...")
         test_results = self.evaluate_test_set(test_ds)
         
-        return {"history": history, "test_results": test_results, "splits": {"train": train_size, "val": val_size, "test": len(test_ds)}}
+        return {
+            "history": history,
+            "test_results": test_results,
+            "schema": schema,
+            "splits": {"train": len(train_encoded), "val": len(val_encoded), "test": len(test_ds)},
+        }
         
     def evaluate_test_set(self, test_ds):
+        from aiforge.llm.sft_data import split_for_generation
+
         self.model.eval()
         results = []
         exact_matches = 0
         
         with torch.no_grad():
             for example in test_ds:
-                prompt = example.get("instruction", "") + "\n" + example.get("input", "")
-                expected = example.get("output", "")
-                
-                generated = self.generate(prompt, max_new_tokens=50)
-                # generate() already returns only the newly generated tokens
+                prompt_msgs, expected = split_for_generation(example)
+                generated = self.generate("", max_new_tokens=50, messages=prompt_msgs)
                 generated_clean = generated.strip()
                 expected_clean = expected.strip()
                 
@@ -386,7 +428,7 @@ class LLMEngine:
                     exact_matches += 1
                     
                 results.append({
-                    "prompt": prompt,
+                    "prompt": prompt_msgs,
                     "expected": expected_clean,
                     "generated": generated_clean,
                     "match": match

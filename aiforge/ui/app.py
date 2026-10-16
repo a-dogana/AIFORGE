@@ -5,11 +5,14 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
 import urllib.request
 from typing import List, Optional
+
+import psutil
 
 if "SSL_CERT_FILE" in os.environ and not os.path.exists(os.environ["SSL_CERT_FILE"]):
     del os.environ["SSL_CERT_FILE"]
@@ -106,21 +109,41 @@ class StartServerRequest(BaseModel):
     experiment_id: str
 
 
-def _kill_port_listeners(port: int) -> bool:
-    """SIGKILL any process listening on ``port`` (except ourselves). Returns True if any were killed."""
-    killed = False
+def _is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """Return True if a TCP listener is already accepting connections on host:port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex((host, port)) == 0
+
+
+def _terminate_process_tree(pid: int, timeout: float = 3.0) -> bool:
+    """Gracefully terminate ``pid`` and all its descendants, then SIGKILL stragglers after ``timeout``s."""
     try:
-        out = subprocess.check_output(["lsof", "-ti", f":{port}"], stderr=subprocess.DEVNULL)
-    except Exception:
+        parent = psutil.Process(pid)
+    except psutil.NoSuchProcess:
         return False
-    for pid_str in out.decode().split():
-        if pid_str.isdigit() and int(pid_str) != os.getpid():
+
+    try:
+        children = parent.children(recursive=True)
+    except psutil.Error:
+        children = []
+
+    targets = children + [parent]
+    for proc in targets:
+        try:
+            proc.terminate()
+        except psutil.Error:
+            pass
+
+    _, alive = psutil.wait_procs(targets, timeout=timeout)
+    if alive:
+        for proc in alive:
             try:
-                os.kill(int(pid_str), 9)
-                killed = True
-            except OSError:
+                proc.kill()
+            except psutil.Error:
                 pass
-    return killed
+        psutil.wait_procs(alive, timeout=1.0)
+    return True
 
 
 def _write_tmp_config(name: str, config: dict) -> str:
@@ -169,17 +192,24 @@ def _build_serve_command(experiment_id: str) -> List[str]:
 def start_server(req: StartServerRequest):
     global llm_server_process
 
-    if llm_server_process is not None and llm_server_process.poll() is None:
-        raise HTTPException(status_code=400, detail="Server is already running")
+    if llm_server_process is not None:
+        if llm_server_process.poll() is None:
+            raise HTTPException(status_code=400, detail="Server is already running")
+        llm_server_process = None
 
     cmd = _build_serve_command(req.experiment_id)
+    if _is_port_in_use(LLM_SERVER_PORT):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Port {LLM_SERVER_PORT} is already in use by another process.",
+        )
+
     try:
-        _kill_port_listeners(LLM_SERVER_PORT)
         os.makedirs(os.path.dirname(LLM_SERVER_LOG), exist_ok=True)
         with open(LLM_SERVER_LOG, "a") as log_file:
             # The child inherits the descriptor; the parent can close its copy.
             llm_server_process = subprocess.Popen(cmd, stdout=log_file, stderr=log_file)
-        return {"status": "starting"}
+        return {"status": "starting", "pid": llm_server_process.pid}
     except Exception as e:
         logger.error(f"Failed to launch LLM server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -188,23 +218,18 @@ def start_server(req: StartServerRequest):
 @app.post("/api/server/stop")
 def stop_server():
     global llm_server_process
-    stopped = False
-    if llm_server_process is not None:
-        try:
-            llm_server_process.terminate()
-            llm_server_process.wait(timeout=3.0)
-        except subprocess.TimeoutExpired:
-            llm_server_process.kill()
-            llm_server_process.wait(timeout=1.0)
-        except Exception:
-            pass
-        finally:
-            llm_server_process = None
-        stopped = True
+    if llm_server_process is None:
+        return {"status": "not running"}
 
-    # Also clean up any lingering process on the LLM port
-    stopped = _kill_port_listeners(LLM_SERVER_PORT) or stopped
-    return {"status": "stopped" if stopped else "not running"}
+    proc = llm_server_process
+    llm_server_process = None
+    was_running = proc.poll() is None
+    stopped = _terminate_process_tree(proc.pid, timeout=3.0) if was_running else False
+    try:
+        proc.wait(timeout=1.0)
+    except Exception:
+        pass
+    return {"status": "stopped" if (stopped or was_running) else "not running"}
 
 
 @app.get("/api/status")
@@ -434,17 +459,16 @@ async def start_forge(req: ForgeRequest):
                 text = line.decode("utf-8", errors="replace").strip()
                 if text:
                     yield f"data: {text}\n\n"
+            yield "data: [DONE]\n\n"
         except (asyncio.CancelledError, GeneratorExit):
             pass
         finally:
             if process.returncode is None:
+                _terminate_process_tree(process.pid, timeout=3.0)
                 try:
-                    process.terminate()
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
-                except Exception:
                     process.kill()
-                    await process.wait()
-            yield "data: [DONE]\n\n"
+                except Exception:
+                    pass
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

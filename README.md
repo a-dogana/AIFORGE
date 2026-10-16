@@ -1,24 +1,24 @@
-# AIFORGE v2.1 — Autonomous AI Laboratory & Model Forge
+# AIFORGE v2.1.1 — Autonomous AI Laboratory & Model Forge
 
-AIFORGE è una piattaforma completa, autonoma e verificabile per l'addestramento, il fine-tuning con QLoRA/LoRA, l'allineamento con preferenze (DPO), la fusione avanzata di modelli (SLERP/DARE), la generazione di dataset sintetici curati (LIMA single-turn & multi-turn) e il deployment ottimizzato per **Apple Silicon (M1/M2/M3/M4)** e CUDA.
+AIFORGE è una piattaforma completa, autonoma e verificabile per l'addestramento, il fine-tuning con QLoRA/LoRA, l'allineamento con preferenze (DPO), la fusione avanzata di modelli (SLERP/DARE), la generazione di dataset sintetici curati (LIMA single-turn & multi-turn) e il deployment ottimizzato per **Apple Silicon (M1/M2/M3/M4)**, Linux e Windows (CUDA/MPS/CPU).
 
 ---
 
 ## 🌟 Funzionalità Chiave
 
-- 📦 **GGUF Direct Exporter**: Esportazione diretta di modelli fine-tuned o fusi in pacchetti GGUF compatibili con `llama.cpp` e LM Studio (`Q4_K_M`, `Q5_K_M`, `Q8_0`, `F16`).
+- 📦 **GGUF Direct Exporter**: Conversione reale (`convert_hf_to_gguf.py` + `llama-quantize`) con fusione automatica degli adapter LoRA/QLoRA e validazione binaria dell'header GGUF v2/v3 (`Q4_K_M`, `Q5_K_M`, `Q8_0`, `F16`).
 - 🎯 **DPO (Direct Preference Optimization)**: Motore nativo di allineamento da preferenze umane (`prompt`, `chosen`, `rejected`) con funzione di perdita log-ratio e calcolo automatico dei margini di ricompensa.
-- 🔬 **LIMA Synthetic Data Pipeline (Single & Multi-Turn)**: Generazione strutturata di dataset sintetici con espansione tassonomica, token-bucket rate limiter, backoff adattivo con jitter e supporto per conversazioni multi-turno a più livelli di approfondimento.
-- ⚡ **Native 4-bit NF4 QLoRA**: Quantizzazione NormalFloat4 a doppio stadio con low-rank adapter su CPU e Apple Silicon Metal (MPS), abbattendo fino al 75% l'uso di memoria RAM.
+- 🔬 **LIMA Synthetic Data Pipeline & SFT Conversazionale**: Generazione strutturata single/multi-turn e addestramento SFT nativo su conversazioni `messages` con applicazione rigorosa del `chat_template`, mascheramento `-100` dei turni non-assistant e filtraggio pre-split dei sample troncati privi di token target.
+- ⚡ **Native 4-bit NF4 QLoRA (Memory-Optimized)**: Quantizzazione NormalFloat4 a blocchi su CPU e funzione autograd custom `_NF4BaseLinearFunction` che dequantizza on-the-fly senza trattenere matrici float full-size nel grafo autograd.
 - 🧬 **Model Merge Lab**: Algoritmi geometrici avanzati:
   - **SLERP** (Spherical Linear Interpolation) con clamping e fallback lineare;
   - **DARE-Linear** (Drop And REscale delta pruning);
   - **Multi-LoRA Adapter Fusion**;
-  - Valutazione scientifica automatica della **Perplexity (PPL)** con Release Gate (`PROMOTED` / `FLAGGED_REGRESSION`).
-- 🦙 **Ollama One-Click Export**: Esportazione automatica di `Modelfile` pronti per l'importazione istantanea nel runtime Ollama locale.
-- 🎛️ **Dashboard Studio Reattiva (Alpine.js)**: Nuova interfaccia grafica reattiva a zero dipendenze di build (`aiforge ui`), con monitoraggio in tempo reale, gestione esperimenti, chat playground e toolbar per export Ollama/GGUF.
-- 🍲 **Soup Isolated Fine-Tuning Backend**: Motore delegato di addestramento LoRA/SFT in ambiente isolato (`SoupBackend`), con traduzione automatica delle configurazioni (`soup.yaml`), supporto chat template e protezione da conflitti di dipendenze.
-- 🛡️ **Hardening & Security-by-Design**: Elevazione dinamica preventiva del limite soft dei file descriptor su macOS (10.240 FD), isolamento loopback da proxy HTTP e protezione assoluta contro il path traversal.
+  - Valutazione scientifica automatica della **Perplexity (PPL)** con Release Gate (`PROMOTED` / `FLAGGED_REGRESSION` / `UNKNOWN` su metriche non finite o baseline assenti).
+- 🦙 **Ollama One-Click Export**: Esportazione automatica di `Modelfile` pronti per l'importazione istantanea nel runtime Ollama locale con supporto adapter PEFT/QLoRA.
+- 🎛️ **Dashboard Studio Reattiva (Alpine.js)**: Interfaccia grafica reattiva a zero dipendenze di build (`aiforge ui`), gestione sicura dei sottoprocessi tramite `psutil` e credenziali cross-platform tramite `keyring`.
+- 🍲 **Soup Isolated Fine-Tuning Backend**: Motore delegato di addestramento LoRA/SFT in ambiente isolato (`SoupBackend`) compatibile POSIX e Windows (`bin/` e `Scripts/`).
+- 🛡️ **Hardening & Security-by-Design**: Confinamento crittografico e lessicale delle scritture in `registry/`, prevenzione data leakage train/val/test, caricamenti PyTorch `weights_only=True` e isolamento loopback `127.0.0.1`.
 
 ---
 
@@ -134,9 +134,9 @@ AIFORGE adotta un'architettura a **processi isolati** per l'addestramento dei mo
 
 ## 🧪 Verifica e Test Suite
 
-La piattaforma include una test suite esaustiva con oltre 90 casi di test certificati:
+La piattaforma include una test suite esaustiva con **153 casi di test certificati** (`152 passed, 1 skipped, 0 failed`):
 ```bash
-pytest tests/ -v
+pytest tests/ -q
 ```
 
 ---

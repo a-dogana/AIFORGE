@@ -2,6 +2,42 @@
 
 All notable changes to the AIFORGE platform are documented in this file.
 
+## [2.1.1] - 2026-10-16
+
+### Highlights
+Complete architectural, security, numerical, and cross-platform remediation release resolving all 17 items from GitHub Issue #1.
+
+### Fixed & Improved
+- **Packaging & Dependencies (`setup.py`, `MANIFEST.in`, `requirements.txt`)**:
+  - Added missing `__init__.py` in `aiforge/ui` and `aiforge/llm/backends`, included static/template assets via `MANIFEST.in` + `include_package_data=True`, and declared `psutil`, `httpx`, `keyring`, `PyYAML`, `accelerate`, and `pillow`.
+- **Process Management (`aiforge/ui/app.py`)**:
+  - Replaced indiscriminate `lsof` + `kill -9` port killing with safe TCP socket binding checks (`_is_port_in_use`, HTTP 409) and managed subprocess tree termination via `psutil` (`_terminate_process_tree`).
+- **Registry Confinement & Safe Experiment IDs (`aiforge/experiments/registry.py`)**:
+  - Separated display `experiment_name` from filesystem `experiment_id` (`generate_experiment_id`), added `resolve_safe_path` confinement before any directory creation, and hardened legacy ID validation.
+- **Unified `checkpoint_path` Contract & Centralized Loaders (`aiforge/experiments/registry.py`)**:
+  - Standardized `checkpoint_path` (`.pt` file for `mlp`/`cnn`, directory for `llm`) with backward-compatible resolution (`resolve_checkpoint_path`, `load_classical_state_dict`, `load_llm_for_inference`) across training, merging, evaluation, and export.
+- **Timestamp Normalization (`aiforge/experiments/registry.py`)**:
+  - Standardized new experiment timestamps to ISO 8601 UTC (`now_utc_iso`) and implemented deterministic descending epoch sorting (`parse_timestamp_epoch`) compatible with legacy float and naive ISO timestamps.
+- **Evaluation Release Gate (`aiforge/evaluation/merge_eval.py`, `aiforge/evaluation/evaluator.py`)**:
+  - Removed sentinel metrics (`999.0`, `50.0`), defaulted `release_gate` to `"UNKNOWN"` on non-finite metrics or missing baselines, and enforced promotion only on finite baseline comparisons.
+- **Cross-Platform Credentials, Soup Backend & Hardware Selection**:
+  - Migrated secret storage in `aiforge/core/secrets.py` to `keyring` with explicit `SecretBackendUnavailableError`.
+  - Added POSIX/Windows path resolution (`resolve_soup_executables`) in `aiforge/llm/backends/soup.py`.
+  - Centralized hardware device selection (`select_device`: `cuda` -> `mps` -> `cpu`) in `aiforge/core/resources.py`.
+- **Conversational SFT & Truncation Filtering (`aiforge/llm/sft_data.py`, `aiforge/llm/engine.py`)**:
+  - Added native `messages`/`turns` SFT encoding with `tokenizer.apply_chat_template`, `-100` masking on non-assistant turns, prefix-consistency validation (`ChatTemplateError`), pre-split filtering of truncated prompt-only samples (`filter_supervised_examples`), and chat-templated inference in `LLMEngine.generate()` and `/api/chat`.
+- **Data Leakage Prevention (`aiforge/data/dataset.py`, `aiforge/deployment/inference.py`)**:
+  - Moved train/val/test splitting before `StandardScaler` fitting and mean imputation in `digits_builtin` and `csv` pipelines, rejecting all-`NaN` training columns and persisting `feature_columns`, `imputation`, and `scaler` in `preprocessing_artifacts`.
+- **QLoRA Memory & Autograd Optimization (`aiforge/llm/qlora.py`)**:
+  - Implemented chunked CPU NF4/FP4 quantization, removed persistent `_cached_dequant_w`, and introduced `_NF4BaseLinearFunction` to dequantize on the fly during forward/backward without retaining full-precision weight matrices in the autograd graph.
+- **Real GGUF Conversion & Binary Validation (`aiforge/deployment/gguf_export.py`)**:
+  - Added execution of `convert_hf_to_gguf.py` and `llama-quantize`, automatic temporary fusion of LoRA/QLoRA adapters, direct `F16` output handling, and binary GGUF v2/v3 header validation (`validate_gguf_file`).
+
+### Verification & Testing
+- Full regression & end-to-end suite expanded to 153 items: **152 passed, 1 skipped, 0 failed** (100% pass rate).
+
+---
+
 ## [2.1.0] - 2026-10-14
 
 ### Highlights

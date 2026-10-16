@@ -475,8 +475,7 @@ class LLMEngine:
                         "qlora": True
                     }, f, indent=2)
                 print(f"Saved native QLoRA adapters to {save_dir}")
-        
-        if hasattr(self.model, "save_pretrained"):
+        elif hasattr(self.model, "save_pretrained"):
             try:
                 self.model.save_pretrained(save_dir)
             except Exception:

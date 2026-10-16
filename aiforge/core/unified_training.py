@@ -33,12 +33,14 @@ class ClassicalAdapter(TrainingAdapterBase):
         self.model = None
         self.train_loader = None
         self.val_loader = None
+        self.test_loader = None
+        self.preprocessing_artifacts = {}
         
     def prepare(self):
         from aiforge.data.dataset import DataEngine
         from aiforge.models import ArchitectureEngine
         
-        self.train_loader, self.val_loader, _, _ = DataEngine.get_dataloaders(self.config)
+        self.train_loader, self.val_loader, self.test_loader, self.preprocessing_artifacts = DataEngine.get_dataloaders(self.config)
         self.model = ArchitectureEngine.get_model(self.config)
 
     def train(self) -> Dict[str, Any]:
@@ -163,6 +165,7 @@ class UnifiedOrchestrator:
             "experiment_name": self.config.experiment_name,
             "config": self.config.model_dump(),
             "results": clean_results,
+            "preprocessing_artifacts": getattr(self.adapter, "preprocessing_artifacts", {}),
             "timestamp": self.registry.now_utc_iso(),
             "checkpoint_path": saved_ckpt_path
         }

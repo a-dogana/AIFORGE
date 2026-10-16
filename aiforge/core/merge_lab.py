@@ -328,6 +328,7 @@ class MergeLab:
         with open(os.path.join(artifact_path, "config.yaml"), "w") as f:
             yaml.dump(result_config.model_dump(), f)
             
+        rec_a_full = self.registry.get_experiment_record(req.model_a_id) if not req.model_a_id.startswith("BASE:") else None
         record = {
             "id": exp_id,
             "experiment_name": req.output_name,
@@ -339,6 +340,7 @@ class MergeLab:
                 "alpha": req.alpha,
                 "additional_adapters": req.additional_adapters
             },
+            "preprocessing_artifacts": (rec_a_full or {}).get("preprocessing_artifacts", {}),
             "timestamp": self.registry.now_utc_iso(),
             "checkpoint_path": saved_ckpt_path
         }

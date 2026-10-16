@@ -1,32 +1,41 @@
 from setuptools import setup, find_packages
 
+EXTRAS = {
+    "tuning": ["optuna"],
+    "export": ["onnx", "onnxruntime"],
+    "serving": ["fastapi", "uvicorn", "httpx"],
+    "ui": ["fastapi", "uvicorn", "httpx"],
+    "generation": ["openai"],
+    "llm": ["transformers", "peft", "datasets", "accelerate", "openai"],
+}
+EXTRAS["all"] = sorted({pkg for group in EXTRAS.values() for pkg in group})
+
 setup(
     name="aiforge",
-    version="1.2.0rc1",
-    packages=find_packages(),
+    version="2.1.1",
+    packages=find_packages(include=["aiforge", "aiforge.*"]),
+    include_package_data=True,
+    package_data={
+        "aiforge.ui": [
+            "static/*",
+            "templates/*",
+        ],
+    },
     install_requires=[
         "torch",
         "torchvision",
-        "pydantic",
+        "pydantic>=2.0,<3.0",
         "pyyaml",
         "numpy",
         "scikit-learn",
         "pandas",
+        "psutil",
     ],
-    extras_require={
-        "tuning": ["optuna"],
-        "export": ["onnx", "onnxruntime"],
-        "serving": ["fastapi", "uvicorn", "httpx"],
-        "llm": ["transformers", "peft", "datasets", "psutil", "accelerate"],
-        "all": [
-            "optuna", "onnx", "onnxruntime", "fastapi", "uvicorn", 
-            "httpx", "transformers", "peft", "datasets", "psutil", "accelerate"
-        ]
-    },
+    extras_require=EXTRAS,
     entry_points={
         "console_scripts": [
             "aiforge=aiforge_cli:main",
         ],
     },
-    py_modules=["aiforge_cli"]
+    py_modules=["aiforge_cli"],
 )

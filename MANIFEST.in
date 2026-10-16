@@ -1,0 +1,2 @@
+recursive-include aiforge/ui/static *
+recursive-include aiforge/ui/templates *

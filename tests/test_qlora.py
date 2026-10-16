@@ -34,6 +34,17 @@ def test_nf4_quantization_numerical_stability():
     assert recon_fp4.shape == w.shape
 
 
+def test_chunked_quantization_equivalence():
+    torch.manual_seed(7)
+    w = torch.randn(97, 131)  # non-multiple of block_size
+    p_full, s_full, sh1, pad1 = quantize_to_nf4(w, block_size=64, quant_type="nf4", chunk_blocks=4096)
+    p_chunk, s_chunk, sh2, pad2 = quantize_to_nf4(w, block_size=64, quant_type="nf4", chunk_blocks=3)
+    assert sh1 == sh2
+    assert pad1 == pad2
+    assert torch.equal(p_full, p_chunk)
+    assert torch.allclose(s_full, s_chunk)
+
+
 def test_nf4_quantized_linear_forward_backward():
     torch.manual_seed(42)
     in_features = 64
@@ -52,10 +63,12 @@ def test_nf4_quantized_linear_forward_backward():
     assert q_layer.packed_weights.requires_grad is False
     assert q_layer.lora_A.requires_grad is True
     assert q_layer.lora_B.requires_grad is True
+    assert not hasattr(q_layer, "_cached_dequant_w")
     
     x = torch.randn(4, in_features, requires_grad=True)
     out = q_layer(x)
     assert out.shape == (4, out_features)
+    assert not hasattr(q_layer, "_cached_dequant_w")
     
     loss = out.sum()
     loss.backward()
@@ -65,6 +78,80 @@ def test_nf4_quantized_linear_forward_backward():
     assert q_layer.lora_A.grad.shape == (in_features, 8)
     assert q_layer.lora_B.grad.shape == (8, out_features)
     assert q_layer.packed_weights.grad is None
+
+    # Verify eval mode also never caches persistent full float weights
+    q_layer.eval()
+    _ = q_layer(x.detach())
+    assert getattr(q_layer, "_cached_dequant_w", None) is None
+
+
+def test_nf4_autograd_matches_reference_and_does_not_save_full_weight():
+    """
+    Verifies that _NF4BaseLinearFunction produces the exact same forward output
+    and backward gradients (with respect to x, lora_A, and lora_B across stacked layers)
+    as a reference implementation using F.linear on dequantized weights, while NOT
+    retaining any full-sized (out_features, in_features) float tensor in saved_tensors.
+    """
+    torch.manual_seed(123)
+    in_f, hidden_f, out_f = 64, 96, 48
+    lin1 = nn.Linear(in_f, hidden_f, bias=True)
+    lin2 = nn.Linear(hidden_f, out_f, bias=False)
+
+    q1 = NF4QuantizedLinear.from_linear(lin1, lora_r=4, lora_alpha=8.0, lora_dropout=0.0)
+    q2 = NF4QuantizedLinear.from_linear(lin2, lora_r=4, lora_alpha=8.0, lora_dropout=0.0)
+    with torch.no_grad():
+        q1.lora_B.normal_(0, 0.1)
+        q2.lora_B.normal_(0, 0.1)
+
+    # Build exact reference layers from dequantized base weights + identical LoRA params
+    w1_deq = q1.dequantize()
+    b1_deq = q1.bias_val.clone()
+    lora_A1_ref = nn.Parameter(q1.lora_A.detach().clone())
+    lora_B1_ref = nn.Parameter(q1.lora_B.detach().clone())
+
+    w2_deq = q2.dequantize()
+    lora_A2_ref = nn.Parameter(q2.lora_A.detach().clone())
+    lora_B2_ref = nn.Parameter(q2.lora_B.detach().clone())
+
+    x_q = torch.randn(3, 5, in_f, requires_grad=True)
+    x_ref = x_q.detach().clone().requires_grad_(True)
+
+    # Forward through stacked QLoRA layers
+    h_q = q1(x_q)
+    out_q = q2(h_q)
+
+    # Inspect autograd saved tensors on the _NF4BaseLinearFunctionBackward nodes
+    # Neither q1 nor q2 base backward nodes may store a tensor of shape (hidden_f, in_f) or (out_f, hidden_f)
+    visited = set()
+    stack = [out_q.grad_fn]
+    while stack:
+        fn = stack.pop()
+        if fn is None or fn in visited:
+            continue
+        visited.add(fn)
+        if "NF4BaseLinearFunctionBackward" in type(fn).__name__:
+            saved = getattr(fn, "saved_tensors", ())
+            for t in saved:
+                assert t.shape not in {(hidden_f, in_f), (out_f, hidden_f)}
+        for next_fn, _ in getattr(fn, "next_functions", ()):
+            stack.append(next_fn)
+
+    # Reference forward
+    h_ref = torch.nn.functional.linear(x_ref, w1_deq, b1_deq) + ((x_ref @ lora_A1_ref) @ lora_B1_ref) * q1.scaling
+    out_ref = torch.nn.functional.linear(h_ref, w2_deq, None) + ((h_ref @ lora_A2_ref) @ lora_B2_ref) * q2.scaling
+
+    assert torch.allclose(out_q, out_ref, atol=1e-5)
+
+    loss_q = (out_q ** 2).mean()
+    loss_ref = (out_ref ** 2).mean()
+    loss_q.backward()
+    loss_ref.backward()
+
+    assert torch.allclose(x_q.grad, x_ref.grad, atol=1e-5)
+    assert torch.allclose(q1.lora_A.grad, lora_A1_ref.grad, atol=1e-5)
+    assert torch.allclose(q1.lora_B.grad, lora_B1_ref.grad, atol=1e-5)
+    assert torch.allclose(q2.lora_A.grad, lora_A2_ref.grad, atol=1e-5)
+    assert torch.allclose(q2.lora_B.grad, lora_B2_ref.grad, atol=1e-5)
 
 
 def test_apply_qlora_to_model():
@@ -89,6 +176,15 @@ def test_apply_qlora_to_model():
     assert isinstance(model.v_proj, NF4QuantizedLinear)
     assert isinstance(model.out_proj, NF4QuantizedLinear)
     
+    # Verify actual memory footprint of buffers + parameters is much smaller than 3 * 64 * 64 * 4 bytes
+    orig_linear_bytes = 3 * (64 * 64 * 4 + 64 * 4)
+    qlora_bytes = sum(
+        t.numel() * t.element_size()
+        for m in (model.q_proj, model.v_proj, model.out_proj)
+        for t in list(m.parameters()) + list(m.buffers())
+    )
+    assert qlora_bytes < orig_linear_bytes * 0.55
+
     # Test forward pass
     x = torch.randn(2, 64)
     out = model(x)
@@ -154,4 +250,3 @@ def test_qlora_import_and_type_annotations():
     assert hints_conv1d["conv1d"] is typing.Any
     hints_apply = typing.get_type_hints(reloaded.apply_qlora_to_model)
     assert "return" in hints_apply
-

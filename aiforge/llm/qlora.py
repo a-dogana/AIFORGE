@@ -42,35 +42,55 @@ FP4_LEVELS = torch.tensor([
 def quantize_to_nf4(
     w: torch.Tensor,
     block_size: int = 64,
-    quant_type: str = "nf4"
+    quant_type: str = "nf4",
+    chunk_blocks: int = 4096,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Size, int]:
     """
     Quantizes a floating-point weight tensor to packed 4-bit indices (2 values per uint8 byte)
     using block-wise NormalFloat4 or FP4 codebook.
+    Processes blocks in bounded chunks on CPU to avoid full-matrix distance tensor spikes.
     """
-    codebook = NF4_LEVELS if quant_type == "nf4" else FP4_LEVELS
-    codebook = codebook.to(w.device)
+    if block_size <= 0 or block_size % 2 != 0:
+        raise ValueError(f"block_size must be a positive even integer, got {block_size}")
 
+    orig_device = w.device
     shape = w.shape
-    flat_w = w.detach().flatten().float()
-    pad_len = (block_size - (flat_w.numel() % block_size)) % block_size
+    codebook = (NF4_LEVELS if quant_type == "nf4" else FP4_LEVELS).to(
+        device="cpu", dtype=torch.float32
+    )
+
+    flat_cpu = w.detach().to(device="cpu", dtype=torch.float32).reshape(-1)
+    total_elements = flat_cpu.numel()
+    pad_len = (block_size - (total_elements % block_size)) % block_size
     if pad_len > 0:
-        flat_w = torch.cat([flat_w, torch.zeros(pad_len, device=w.device, dtype=torch.float32)])
+        flat_cpu = torch.cat(
+            [flat_cpu, torch.zeros(pad_len, device="cpu", dtype=torch.float32)]
+        )
 
-    blocks = flat_w.view(-1, block_size)
-    scales = blocks.abs().amax(dim=1, keepdim=True).clamp(min=1e-8)
-    normed = blocks / scales
+    blocks = flat_cpu.view(-1, block_size)
+    num_blocks = blocks.shape[0]
 
-    # Distance to codebook levels
-    dist = (normed.unsqueeze(-1) - codebook).abs()
-    indices = dist.argmin(dim=-1).to(torch.uint8)
+    packed_out = torch.empty((num_blocks, block_size // 2), dtype=torch.uint8, device="cpu")
+    scales_out = torch.empty((num_blocks, 1), dtype=torch.float32, device="cpu")
 
-    # Bit-pack: 2 x 4-bit values into 1 x uint8
-    even = indices[:, 0::2]
-    odd = indices[:, 1::2]
-    packed = (even << 4) | (odd & 0x0F)
+    step = max(1, int(chunk_blocks))
+    for start in range(0, num_blocks, step):
+        end = min(start + step, num_blocks)
+        chunk = blocks[start:end]
+        chunk_scales = chunk.abs().amax(dim=1, keepdim=True).clamp(min=1e-8)
+        normed = chunk / chunk_scales
+        dist = (normed.unsqueeze(-1) - codebook).abs()
+        indices = dist.argmin(dim=-1).to(torch.uint8)
+        even = indices[:, 0::2]
+        odd = indices[:, 1::2]
+        packed_out[start:end] = (even << 4) | (odd & 0x0F)
+        scales_out[start:end] = chunk_scales
 
-    return packed, scales, shape, pad_len
+    if orig_device.type != "cpu":
+        packed_out = packed_out.to(orig_device)
+        scales_out = scales_out.to(orig_device)
+
+    return packed_out, scales_out, shape, pad_len
 
 
 def dequantize_from_nf4(
@@ -85,24 +105,95 @@ def dequantize_from_nf4(
     Dequantizes packed 4-bit indices back into a continuous floating-point tensor.
     """
     codebook = NF4_LEVELS if quant_type == "nf4" else FP4_LEVELS
-    codebook = codebook.to(packed.device)
+    codebook = codebook.to(device=packed.device, dtype=torch.float32)
 
     even = (packed >> 4) & 0x0F
     odd = packed & 0x0F
     indices = torch.stack([even, odd], dim=2).view(scales.shape[0], -1)
 
     normed = codebook[indices.long()]
-    dequant = (normed * scales).flatten()
+    dequant = (normed * scales.float()).flatten()
     if pad_len > 0:
         dequant = dequant[:-pad_len]
 
     return dequant.view(shape).to(dtype)
 
 
+class _NF4BaseLinearFunction(torch.autograd.Function):
+    """
+    Custom autograd function for the frozen 4-bit NF4 base projection.
+    Dequantizes weights on the fly during forward and backward without saving
+    the full-precision weight tensor in the autograd graph.
+    """
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        x: torch.Tensor,
+        packed_weights: torch.Tensor,
+        scales: torch.Tensor,
+        bias_val: Optional[torch.Tensor],
+        original_shape: Tuple[int, int],
+        pad_len: int,
+        quant_type: str,
+    ) -> torch.Tensor:
+        ctx.save_for_backward(packed_weights, scales)
+        ctx.original_shape = original_shape
+        ctx.pad_len = pad_len
+        ctx.quant_type = quant_type
+
+        p_dev = packed_weights if packed_weights.device == x.device else packed_weights.to(x.device)
+        s_dev = scales if scales.device == x.device else scales.to(x.device)
+        w = dequantize_from_nf4(
+            p_dev,
+            s_dev,
+            torch.Size(original_shape),
+            pad_len,
+            quant_type=quant_type,
+            dtype=x.dtype,
+        )
+        bias = (
+            bias_val.to(device=x.device, dtype=x.dtype)
+            if bias_val is not None
+            else None
+        )
+        return torch.nn.functional.linear(x, w, bias)
+
+    @staticmethod
+    def backward(
+        ctx: Any, grad_output: torch.Tensor
+    ) -> Tuple[Optional[torch.Tensor], None, None, None, None, None, None]:
+        grad_x = None
+        if ctx.needs_input_grad[0]:
+            packed_weights, scales = ctx.saved_tensors
+            p_dev = (
+                packed_weights
+                if packed_weights.device == grad_output.device
+                else packed_weights.to(grad_output.device)
+            )
+            s_dev = (
+                scales
+                if scales.device == grad_output.device
+                else scales.to(grad_output.device)
+            )
+            w = dequantize_from_nf4(
+                p_dev,
+                s_dev,
+                torch.Size(ctx.original_shape),
+                ctx.pad_len,
+                quant_type=ctx.quant_type,
+                dtype=grad_output.dtype,
+            )
+            grad_x = torch.matmul(grad_output, w)
+
+        return grad_x, None, None, None, None, None, None
+
+
 class NF4QuantizedLinear(nn.Module):
     """
     A Linear layer whose base weight is frozen in 4-bit packed NF4 format,
     coupled with trainable low-rank adapters (LoRA).
+    Never caches full dequantized weights in memory across passes.
     """
     def __init__(
         self,
@@ -148,13 +239,6 @@ class NF4QuantizedLinear(nn.Module):
             self.register_parameter("lora_B", None)
             self.dropout = nn.Identity()
 
-        self._cached_dequant_w = None
-
-    def train(self, mode: bool = True):
-        super().train(mode)
-        if mode:
-            self._cached_dequant_w = None
-
     @classmethod
     def from_linear(
         cls,
@@ -163,10 +247,12 @@ class NF4QuantizedLinear(nn.Module):
         lora_alpha: float = 16.0,
         lora_dropout: float = 0.05,
         block_size: int = 64,
-        quant_type: str = "nf4"
+        quant_type: str = "nf4",
+        to_device: Optional[Union[str, torch.device]] = None,
     ) -> "NF4QuantizedLinear":
         out_f, in_f = linear.weight.shape
         has_bias = linear.bias is not None
+        target_device = torch.device(to_device) if to_device is not None else linear.weight.device
         mod = cls(
             in_features=in_f,
             out_features=out_f,
@@ -178,13 +264,15 @@ class NF4QuantizedLinear(nn.Module):
             bias=has_bias
         )
         with torch.no_grad():
-            w = linear.weight.data
-            packed, scales, _, pad_len = quantize_to_nf4(w, block_size=block_size, quant_type=quant_type)
+            w_cpu = linear.weight.detach().to(device="cpu", dtype=torch.float32)
+            packed, scales, _, pad_len = quantize_to_nf4(w_cpu, block_size=block_size, quant_type=quant_type)
             mod.packed_weights.copy_(packed)
             mod.scales.copy_(scales)
             mod.pad_len = pad_len
             if has_bias:
-                mod.bias_val.copy_(linear.bias.data.float())
+                mod.bias_val.copy_(linear.bias.detach().to(device="cpu", dtype=torch.float32))
+        if target_device.type != "cpu":
+            mod = mod.to(target_device)
         return mod
 
     @classmethod
@@ -195,11 +283,13 @@ class NF4QuantizedLinear(nn.Module):
         lora_alpha: float = 16.0,
         lora_dropout: float = 0.05,
         block_size: int = 64,
-        quant_type: str = "nf4"
+        quant_type: str = "nf4",
+        to_device: Optional[Union[str, torch.device]] = None,
     ) -> "NF4QuantizedLinear":
         # HuggingFace Conv1D has weight of shape (in_features, out_features)
-        w = conv1d.weight.data.t()  # Transpose to (out_features, in_features)
-        out_f, in_f = w.shape
+        target_device = torch.device(to_device) if to_device is not None else conv1d.weight.device
+        w_cpu = conv1d.weight.detach().to(device="cpu", dtype=torch.float32).t().contiguous()
+        out_f, in_f = w_cpu.shape
         has_bias = getattr(conv1d, "bias", None) is not None
         mod = cls(
             in_features=in_f,
@@ -212,12 +302,14 @@ class NF4QuantizedLinear(nn.Module):
             bias=has_bias
         )
         with torch.no_grad():
-            packed, scales, _, pad_len = quantize_to_nf4(w, block_size=block_size, quant_type=quant_type)
+            packed, scales, _, pad_len = quantize_to_nf4(w_cpu, block_size=block_size, quant_type=quant_type)
             mod.packed_weights.copy_(packed)
             mod.scales.copy_(scales)
             mod.pad_len = pad_len
             if has_bias:
-                mod.bias_val.copy_(conv1d.bias.data.float())
+                mod.bias_val.copy_(conv1d.bias.detach().to(device="cpu", dtype=torch.float32))
+        if target_device.type != "cpu":
+            mod = mod.to(target_device)
         return mod
 
     def dequantize(self, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
@@ -225,31 +317,24 @@ class NF4QuantizedLinear(nn.Module):
         return dequantize_from_nf4(
             self.packed_weights,
             self.scales,
-            self.original_shape,
+            torch.Size(self.original_shape),
             self.pad_len,
             quant_type=self.quant_type,
             dtype=target_dtype
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        cached = getattr(self, "_cached_dequant_w", None)
-        if not self.training:
-            if (
-                cached is None 
-                or cached.dtype != x.dtype 
-                or cached.device != x.device
-            ):
-                cached = self.dequantize(dtype=x.dtype).to(device=x.device, dtype=x.dtype)
-                self._cached_dequant_w = cached
-            w = cached
-        else:
-            w = self.dequantize(dtype=x.dtype).to(device=x.device, dtype=x.dtype)
-
-        bias = self.bias_val.to(device=x.device, dtype=x.dtype) if self.bias_val is not None else None
-        out = torch.nn.functional.linear(x, w, bias)
+        out = _NF4BaseLinearFunction.apply(
+            x,
+            self.packed_weights,
+            self.scales,
+            self.bias_val,
+            self.original_shape,
+            self.pad_len,
+            self.quant_type,
+        )
 
         if self.lora_r > 0 and self.lora_A is not None:
-            # LoRA delta: (x * dropout) @ A @ B * scaling
             drop_x = self.dropout(x)
             lora_a = self.lora_A.to(device=x.device, dtype=x.dtype)
             lora_b = self.lora_B.to(device=x.device, dtype=x.dtype)
@@ -265,16 +350,15 @@ class NF4QuantizedLinear(nn.Module):
         """
         w_base = self.dequantize()
         if self.lora_r > 0 and self.lora_A is not None:
-            # Add LoRA delta: delta_W = (A @ B).t()
             delta_w = (self.lora_A @ self.lora_B).t() * self.scaling
-            w_base = w_base + delta_w
+            w_base = w_base + delta_w.to(w_base.device, w_base.dtype)
 
         linear = nn.Linear(self.in_features, self.out_features, bias=self.bias_val is not None)
         with torch.no_grad():
             linear.weight.copy_(w_base)
             if self.bias_val is not None:
                 linear.bias.copy_(self.bias_val)
-        return linear
+        return linear.to(self.packed_weights.device)
 
 
 def apply_qlora_to_model(
@@ -284,7 +368,8 @@ def apply_qlora_to_model(
     lora_dropout: float = 0.05,
     target_modules: Optional[List[str]] = None,
     block_size: int = 64,
-    quant_type: str = "nf4"
+    quant_type: str = "nf4",
+    to_device: Optional[Union[str, torch.device]] = None,
 ) -> Dict[str, Any]:
     """
     Recursively replaces target linear/conv1d layers in a model with NF4QuantizedLinear,
@@ -319,7 +404,8 @@ def apply_qlora_to_model(
                         lora_alpha=lora_alpha,
                         lora_dropout=lora_dropout,
                         block_size=block_size,
-                        quant_type=quant_type
+                        quant_type=quant_type,
+                        to_device=to_device,
                     )
                 else:
                     num_params = child.weight.numel()
@@ -329,10 +415,12 @@ def apply_qlora_to_model(
                         lora_alpha=lora_alpha,
                         lora_dropout=lora_dropout,
                         block_size=block_size,
-                        quant_type=quant_type
+                        quant_type=quant_type,
+                        to_device=to_device,
                     )
 
                 setattr(parent, name, new_mod)
+                del child
                 replaced_count += 1
                 total_base_params_compressed += num_params
             else:

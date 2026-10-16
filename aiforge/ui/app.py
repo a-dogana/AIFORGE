@@ -169,7 +169,7 @@ def _build_serve_command(experiment_id: str) -> List[str]:
             "experiment_name": f"Base_{base_model_id.replace('/', '_')}",
             "domain": "llm",
             "task": "generation",
-            "device": "mps",
+            "device": "auto",
             "architecture": {
                 "type": "llm",
                 "llm_config": {"model_id": base_model_id, "allow_download": True, "lora_enabled": False},

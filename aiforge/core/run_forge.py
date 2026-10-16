@@ -133,6 +133,13 @@ Struttura:
     print("4. Preparazione configurazione per il fine-tuning LoRA...", flush=True)
     
     soup_env = resolve_soup_env()
+    from aiforge.core.resources import select_device
+    requested_device = getattr(args, "device", None) or "auto"
+    try:
+        device_used = select_device(requested_device)
+    except Exception as e:
+        print(f"❌ Device non disponibile: {e}", flush=True)
+        sys.exit(1)
     cfg = ExperimentConfig(
         experiment_name=args.name,
         domain="llm",
@@ -152,7 +159,7 @@ Struttura:
         data={"type": "jsonl", "csv_config": {"path": dataset_path, "target_column": "output"}},
         batch_size=2,
         epochs=3,
-        device="mps",
+        device=device_used,
         backend="soup",
         backend_args={
             "soup_env_path": soup_env,
@@ -162,7 +169,7 @@ Struttura:
     )
 
     print("PROGRESS: 70", flush=True)
-    print("5. Avvio motore di training Soup su Apple Silicon (MPS)...", flush=True)
+    print(f"5. Avvio motore di training Soup (device: {device_used})...", flush=True)
     try:
         backend = SoupBackend(cfg)
         res = backend.train(dataset_path)
@@ -180,7 +187,7 @@ Struttura:
         config=cfg,
         training_results={"history": res.get("history", {}), "soup_version": res.get("soup_version")},
         evaluation_results={},
-        device_used="mps",
+        device_used=device_used,
         experiment_id=clean_name,
         checkpoint_path=adapter_path,
     )
@@ -243,6 +250,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
     parser.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")
     parser.add_argument("--generator-model", default=None, help="Teacher LLM model for data generation (e.g. gemini-1.5-flash)")
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"], help="Compute device (auto: cuda -> mps -> cpu)")
     args = parser.parse_args()
 
     run_forge_pipeline(args)

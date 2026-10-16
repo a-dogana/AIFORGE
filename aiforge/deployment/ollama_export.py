@@ -20,7 +20,12 @@ class OllamaExporter:
         if arch_type != "llm":
             raise ValueError(f"Only LLM models can be exported to Ollama (found '{arch_type}').")
 
-        checkpoint_path = self.registry.resolve_checkpoint_path(rec)
+        if isinstance(self.registry, ExperimentRegistry):
+            checkpoint_path = self.registry.resolve_checkpoint_path(rec)
+        else:
+            checkpoint_path = rec.get("checkpoint_path", "")
+            if not checkpoint_path or not os.path.exists(checkpoint_path):
+                raise FileNotFoundError(f"Checkpoint directory {checkpoint_path} does not exist.")
 
         name = ollama_model_name or f"aiforge-{experiment_id.lower().replace('_', '-')}"
         sys_prompt = system_prompt or f"You are a specialized model trained and merged with AIFORGE ({rec.get('experiment_name', 'LLM')})."

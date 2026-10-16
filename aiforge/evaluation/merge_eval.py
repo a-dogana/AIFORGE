@@ -104,7 +104,9 @@ class MergeEvaluator:
             ]
             test_prompts = default_prompts if sample_texts is None else sample_texts
 
-            device = "mps" if torch.backends.mps.is_available() else "cpu"
+            from aiforge.core.resources import select_device
+            device = select_device(cfg_c.get("device", "auto") if isinstance(cfg_c, dict) else "auto")
+            results["device_used"] = device
 
             try:
                 # Load merged model via centralized registry loader

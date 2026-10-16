@@ -12,14 +12,8 @@ class LLMEngine:
         if self.llm_config is None:
             raise ValueError("LLMConfig is required for LLMEngine.")
             
-        self.device = config.device
-        if self.device == "auto":
-            if torch.backends.mps.is_available():
-                self.device = "mps"
-            elif torch.cuda.is_available():
-                self.device = "cuda"
-            else:
-                self.device = "cpu"
+        from aiforge.core.resources import select_device
+        self.device = select_device(config.device)
                 
         self.model = None
         self.tokenizer = None

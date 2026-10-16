@@ -7,25 +7,68 @@ try:
 except ImportError:
     resource = None
 
+SUPPORTED_DEVICES = ("auto", "cpu", "cuda", "mps")
+
+
+class DeviceUnavailableError(RuntimeError):
+    """Raised when an explicitly requested compute device is not available on this host."""
+
+
+def _cuda_available() -> bool:
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def _mps_available() -> bool:
+    try:
+        return bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+    except Exception:
+        return False
+
+
+def select_device(requested_device: str = "auto") -> str:
+    """
+    Shared compute device selector used by training, evaluation, UI, Forge and LLM engine.
+    - ``auto``: picks ``cuda`` -> ``mps`` -> ``cpu`` in this order.
+    - ``cpu`` / ``cuda`` / ``mps``: validated; raises ``DeviceUnavailableError`` if unavailable.
+    """
+    req = (requested_device or "auto").strip().lower()
+    if req.startswith("cuda:"):
+        base = "cuda"
+    else:
+        base = req
+    if base not in SUPPORTED_DEVICES:
+        raise ValueError(
+            f"Unsupported device '{requested_device}'. Supported: {', '.join(SUPPORTED_DEVICES)}"
+        )
+    if base == "auto":
+        if _cuda_available():
+            return "cuda"
+        if _mps_available():
+            return "mps"
+        return "cpu"
+    if base == "cpu":
+        return "cpu"
+    if base == "cuda":
+        if not _cuda_available():
+            raise DeviceUnavailableError("Requested device 'cuda' is not available on this host.")
+        return req
+    if base == "mps":
+        if not _mps_available():
+            raise DeviceUnavailableError("Requested device 'mps' is not available on this host.")
+        return "mps"
+    raise ValueError(f"Unsupported device '{requested_device}'")
+
+
 class ResourceChecker:
     @staticmethod
     def get_available_device(requested_device: str = "auto") -> str:
         """
-        Determines the best available device based on the request.
+        Determines the compute device via the shared selector ``select_device``.
         """
-        if requested_device == "cpu":
-            return "cpu"
-            
-        if requested_device in ("auto", "mps"):
-            if platform.system() == "Darwin" and platform.machine() == "arm64":
-                if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    return "mps"
-                    
-        if requested_device in ("auto", "cuda"):
-            if torch.cuda.is_available():
-                return "cuda"
-                
-        return "cpu"
+        return select_device(requested_device)
 
     @staticmethod
     def check_and_raise_nofile_limit(target_limit: int = 10240) -> dict:

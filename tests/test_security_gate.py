@@ -10,14 +10,21 @@ client = TestClient(app)
 # Phase 2: Keychain Testing
 def test_keychain_operations(monkeypatch):
     """Verifica salvataggio, lettura e che nessuna chiave sia in log/output"""
+    import aiforge.core.secrets as secrets_mod
     from aiforge.core.secrets import save_secret, get_secret, has_secret
-    
-    # Use synthetic credentials with a test prefix
-    monkeypatch.setattr("aiforge.core.secrets.subprocess.run", lambda *args, **kwargs: type('obj', (object,), {'stdout': 'test_value\n'})())
-    
+
+    store = {}
+
+    class _MockKr:
+        priority = 10
+
+    monkeypatch.setattr(secrets_mod.keyring, "get_keyring", lambda: _MockKr())
+    monkeypatch.setattr(secrets_mod.keyring, "set_password", lambda s, a, v: store.__setitem__((s, a), v))
+    monkeypatch.setattr(secrets_mod.keyring, "get_password", lambda s, a: "test_value" if (s, a) in store else None)
+
     # Simulating save
     save_secret("test_provider", "fake_credential_123")
-    
+
     # Simulating read
     val = get_secret("test_provider")
     assert val == "test_value"

@@ -686,6 +686,7 @@ def main():
     parser_forge.add_argument("--target-samples", type=int, default=100, help="Target curated samples count for LIMA")
     parser_forge.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
     parser_forge.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")
+    parser_forge.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda", "mps"], help="Compute device (auto: cuda -> mps -> cpu)")
     parser_forge.set_defaults(func=run_forge)
 
     # lima-generate command (v2.0)

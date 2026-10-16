@@ -260,3 +260,31 @@ def test_lima_pipeline_micro_batch_multi_turn():
     assert len(batch[0]["messages"]) == 4
 
 
+def test_lima_pipeline_fallback_model_rotation_and_retry_delay_parsing():
+    assert LIMAPipeline._extract_retry_delay("Please retry in 41.370899701s.") == pytest.approx(41.370899701)
+    assert LIMAPipeline._extract_retry_delay("{'retryDelay': '41s'}") == pytest.approx(41.0)
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=MagicMock(content='["Subtopic A", "Subtopic B"]'))]
+
+    # First call (gemini-2.5-flash) fails with 429 FreeTier quota; second call (gemini-2.0-flash) succeeds immediately
+    mock_client.chat.completions.create.side_effect = [
+        Exception("Error code: 429 - RESOURCE_EXHAUSTED: Quota exceeded for model: gemini-2.5-flash. Please retry in 41.3s."),
+        mock_resp,
+    ]
+
+    pipeline = LIMAPipeline(
+        client=mock_client,
+        model_name="gemini-2.5-flash",
+        fallback_models=["gemini-2.0-flash"],
+        min_request_delay=0.0,
+        max_retries=2,
+    )
+    subtopics = pipeline.generate_taxonomy("Test", target_subtopics=2)
+    assert subtopics == ["Subtopic A", "Subtopic B"]
+    assert pipeline.model_name == "gemini-2.0-flash"
+    assert mock_client.chat.completions.create.call_count == 2
+
+
+

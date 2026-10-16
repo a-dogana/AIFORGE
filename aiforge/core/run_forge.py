@@ -52,22 +52,23 @@ def run_forge_pipeline(args):
     clean_name = re.sub(r"[^\w\-]", "_", args.name.strip().lower())
     dataset_path = f"datasets/forge_{clean_name}.jsonl"
     
-    chosen_model = getattr(args, "generator_model", None) or conn_model or "gemini-1.5-flash"
+    chosen_model = getattr(args, "generator_model", None) or conn_model or "gemini-2.0-flash"
     candidates = [chosen_model]
-    for m in ["gemini-1.5-flash", "gemini-3.8-flash", "gemini-1.5-pro", "gpt-4o-mini"]:
+    for m in ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gpt-4o-mini"]:
         if m not in candidates:
             candidates.append(m)
     
     if args.method == "lima":
-        print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Modello: {candidates[0]}, Target: {args.target_samples} campioni)...", flush=True)
+        print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Modello primario: {candidates[0]}, Fallback: {candidates[1:4]}, Target: {args.target_samples} campioni)...", flush=True)
         from aiforge.data.lima_pipeline import LIMAPipeline
         
         target_model = candidates[0]
         pipeline = LIMAPipeline(
             client=client,
             model_name=target_model,
-            min_request_delay=1.0,
-            max_retries=4
+            min_request_delay=2.0,
+            max_retries=5,
+            fallback_models=candidates[1:],
         )
         
         def lima_progress(pct, msg):

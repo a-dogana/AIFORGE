@@ -219,16 +219,46 @@ class LIMAPipeline:
     def __init__(
         self,
         client: Any,
-        model_name: str = "gemini-3.8-flash",
+        model_name: str = "gemini-2.5-flash",
         staging_dir: str = "datasets/staging",
         min_request_delay: float = 1.0,
-        max_retries: int = 4
+        max_retries: int = 5,
+        fallback_models: Optional[List[str]] = None,
     ):
         self.client = client
         self.model_name = model_name
         self.staging = LIMAStagingManager(staging_dir)
         self.min_request_delay = min_request_delay
         self.max_retries = max_retries
+        if fallback_models is not None:
+            self.fallback_models = [m for m in fallback_models if m and m != model_name]
+        elif model_name.lower().startswith("gemini"):
+            default_gemini_fallbacks = [
+                "gemini-2.5-flash-lite",
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite",
+                "gemini-1.5-flash",
+            ]
+            self.fallback_models = [m for m in default_gemini_fallbacks if m != model_name]
+        else:
+            self.fallback_models = []
+
+    @staticmethod
+    def _extract_retry_delay(err_text: str) -> Optional[float]:
+        """Extracts server-suggested retry delay in seconds from 429/RetryInfo payloads."""
+        patterns = [
+            r"retry in\s+(\d+(?:\.\d+)?)\s*s",
+            r"['\"]retryDelay['\"]\s*:\s*['\"](\d+(?:\.\d+)?)s['\"]",
+            r"retry_after['\"]?\s*[:=]\s*(\d+(?:\.\d+)?)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, err_text, flags=re.IGNORECASE)
+            if m:
+                try:
+                    return float(m.group(1))
+                except ValueError:
+                    pass
+        return None
 
     def generate_taxonomy(self, main_topic: str, target_subtopics: int = 15) -> List[str]:
         """
@@ -239,25 +269,24 @@ class LIMAPipeline:
 Rispondi ESCLUSIVAMENTE con un array JSON di stringhe. Esempio:
 ["Sotto-argomento 1", "Sotto-argomento 2"]"""
 
-        response = self._call_llm_with_retry(prompt)
-
         try:
+            response = self._call_llm_with_retry(prompt)
             subtopics = parse_llm_json(response)
             if isinstance(subtopics, list) and len(subtopics) > 0:
                 return [str(s).strip() for s in subtopics if str(s).strip()]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Impossibile generare tassonomia via API ({e}). Utilizzo tassonomia strutturata di fallback.", flush=True)
 
-        # Fallback heuristic taxonomy if parsing fails
+        # Fallback heuristic taxonomy if API quota is exhausted or parsing fails
         return [f"{main_topic} - Modulo {i+1}" for i in range(target_subtopics)]
 
     def generate_micro_batch(self, subtopic: str, count: int = 20, turn_type: str = "single_turn") -> List[Dict[str, Any]]:
         """
         Step 2: Generates a small micro-batch of structured examples for a specific sub-topic.
         Supports 'single_turn' (instruction/output) and 'multi_turn' (conversational dialogues).
-        Chunks large requests into micro-batches of max 5 samples to prevent token truncation and API timeouts.
+        Chunks large requests into micro-batches of max 10 samples to reduce API request volume on free tiers.
         """
-        chunk_size = 5
+        chunk_size = 10
         total_valid: List[Dict[str, Any]] = []
         remaining = max(1, count)
 
@@ -314,29 +343,67 @@ Formato:
 
     def _call_llm_with_retry(self, prompt: str) -> str:
         """
-        Calls the LLM client with adaptive exponential backoff and jitter to protect against 429 and rate limits.
+        Calls the LLM client with automatic fallback model rotation on 429 quota errors,
+        server-guided retryDelay parsing, and adaptive pacing for free-tier RPM limits.
         """
         retries = 0
         backoff = 2.0
+        candidate_models = [self.model_name] + list(self.fallback_models)
+        model_idx = 0
 
         while retries <= self.max_retries:
+            active_model = candidate_models[model_idx % len(candidate_models)]
             try:
-                time.sleep(self.min_request_delay)
+                if self.min_request_delay > 0:
+                    time.sleep(self.min_request_delay)
                 res = self.client.chat.completions.create(
-                    model=self.model_name,
+                    model=active_model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.7
                 )
+                if active_model != self.model_name:
+                    print(f"✅ Risposta ottenuta tramite modello di fallback: {active_model}", flush=True)
+                    self.model_name = active_model
                 return res.choices[0].message.content or ""
             except Exception as e:
-                err_str = str(e).lower()
-                is_rate_limit = "429" in err_str or "rate limit" in err_str or "quota" in err_str or "overloaded" in err_str
+                raw_err = str(e)
+                err_str = raw_err.lower()
+                is_rate_limit = (
+                    "429" in err_str
+                    or "rate limit" in err_str
+                    or "quota" in err_str
+                    or "resource_exhausted" in err_str
+                    or "overloaded" in err_str
+                )
+
+                if is_rate_limit and ("free_tier" in err_str or "limit: 5" in err_str) and self.min_request_delay > 0:
+                    self.min_request_delay = max(self.min_request_delay, 12.5)
+
+                # If we have another fallback model in the pool that hasn't been tried in this cycle, switch immediately
+                if is_rate_limit and len(candidate_models) > 1 and (model_idx + 1) < len(candidate_models):
+                    model_idx += 1
+                    next_model = candidate_models[model_idx]
+                    print(
+                        f"🔄 Quota 429 su '{active_model}': switch automatico al modello '{next_model}'...",
+                        flush=True,
+                    )
+                    if self.min_request_delay > 0:
+                        time.sleep(1.0)
+                    continue
+
                 retries += 1
                 if retries > self.max_retries:
                     print(f"❌ Errore critico LLM: superato il limite di {self.max_retries} tentativi ({e})", flush=True)
                     raise RuntimeError(f"Chiamata LLM fallita dopo {self.max_retries} tentativi: {e}")
 
-                sleep_time = backoff + random.uniform(0.5, 1.5)
+                # Reset model index to try primary/fallbacks again after waiting
+                model_idx = 0
+                server_delay = self._extract_retry_delay(raw_err)
+                if server_delay is not None and self.min_request_delay > 0:
+                    sleep_time = min(server_delay + 2.0, 65.0)
+                else:
+                    sleep_time = backoff + random.uniform(0.5, 1.5) if self.min_request_delay > 0 else 0.01
+
                 print(f"⏳ Connessione o Quota ({retries}/{self.max_retries}): attesa {sleep_time:.1f}s prima di riprovare...", flush=True)
                 time.sleep(sleep_time)
                 backoff *= 2.0

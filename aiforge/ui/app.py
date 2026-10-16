@@ -470,11 +470,12 @@ async def test_connector(req: TestConnectorRequest):
 class ForgeRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     model: str
-    topic: str = Field(..., min_length=1)
+    topic: str = Field("", max_length=500)
     qlora: bool = False
-    method: str = Field("quick", pattern="^(quick|lima)$")
+    method: str = Field("quick", pattern="^(quick|lima|custom)$")
     target_samples: int = Field(100, ge=1, le=10000)
     turn_type: str = Field("single_turn", pattern="^(single_turn|multi_turn)$")
+    dataset: Optional[str] = None
 
 
 @app.post("/api/forge/start")
@@ -484,13 +485,15 @@ async def start_forge(req: ForgeRequest):
             sys.executable, "-m", "aiforge.core.run_forge",
             "--name", req.name,
             "--model", req.model,
-            "--topic", req.topic,
+            "--topic", req.topic or "",
             "--method", req.method,
             "--target-samples", str(req.target_samples),
             "--turn-type", req.turn_type,
         ]
         if req.qlora:
             cmd.append("--qlora")
+        if req.dataset:
+            cmd.extend(["--dataset", req.dataset])
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
         )

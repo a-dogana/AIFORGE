@@ -42,54 +42,66 @@ def get_llm_client():
 
 def run_forge_pipeline(args):
     """Execute the full Forge pipeline (data generation + fine-tuning + registry)."""
-    print(f"=== FORGE TRAINING PIPELINE: {args.name} (Method: {args.method.upper()}) ===", flush=True)
-
-    print("PROGRESS: 10", flush=True)
-    print("1. Caricamento connettore da registry...", flush=True)
-    client, conn_model = get_llm_client()
-    
-    print("PROGRESS: 20", flush=True)
     clean_name = re.sub(r"[^\w\-]", "_", args.name.strip().lower())
-    dataset_path = f"datasets/forge_{clean_name}.jsonl"
+    custom_dataset = getattr(args, "dataset", None)
+    is_custom = bool(custom_dataset or getattr(args, "method", "") == "custom")
     
-    chosen_model = getattr(args, "generator_model", None) or conn_model or "gemini-2.0-flash"
-    candidates = [chosen_model]
-    for m in ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gpt-4o-mini"]:
-        if m not in candidates:
-            candidates.append(m)
-    
-    if args.method == "lima":
-        print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Modello primario: {candidates[0]}, Fallback: {candidates[1:4]}, Target: {args.target_samples} campioni)...", flush=True)
-        from aiforge.data.lima_pipeline import LIMAPipeline
-        
-        target_model = candidates[0]
-        pipeline = LIMAPipeline(
-            client=client,
-            model_name=target_model,
-            min_request_delay=2.0,
-            max_retries=5,
-            fallback_models=candidates[1:],
-        )
-        
-        def lima_progress(pct, msg):
-            scaled_pct = int(20 + (pct * 0.40))  # Scale LIMA generation to 20-60%
-            print(f"PROGRESS: {scaled_pct}", flush=True)
-            print(f"LIMA [{pct}%]: {msg}", flush=True)
+    print(f"=== FORGE TRAINING PIPELINE: {args.name} (Method: {'CUSTOM DATASET' if is_custom else args.method.upper()}) ===", flush=True)
 
-        turn_type = getattr(args, "turn_type", "single_turn")
-        res_lima = pipeline.run_pipeline(
-            job_id=clean_name,
-            main_topic=args.topic,
-            target_samples=args.target_samples,
-            batch_size=args.batch_size,
-            output_final_path=dataset_path,
-            turn_type=turn_type,
-            progress_cb=lima_progress
-        )
-        print(f"✅ Dataset LIMA Curato: {res_lima['curated_count']} campioni salvati (Filtrati da {res_lima['raw_staged_count']} grezzi)!", flush=True)
+    if is_custom:
+        dataset_path = custom_dataset or f"datasets/forge_{clean_name}.jsonl"
+        if not os.path.isfile(dataset_path):
+            print(f"❌ File dataset non trovato: {dataset_path}", flush=True)
+            sys.exit(1)
+        print("PROGRESS: 20", flush=True)
+        print(f"3. Utilizzo dataset pre-esistente caricato da LLM esterno: {dataset_path}", flush=True)
     else:
-        print("3. Generazione dataset sintetico rapido (Quick Mode)...", flush=True)
-        prompt = f"""Crea 15 esempi didattici in formato JSON per il seguente topic: {args.topic}.
+        print("PROGRESS: 10", flush=True)
+        print("1. Caricamento connettore da registry...", flush=True)
+        client, conn_model = get_llm_client()
+        
+        print("PROGRESS: 20", flush=True)
+        dataset_path = f"datasets/forge_{clean_name}.jsonl"
+        
+        chosen_model = getattr(args, "generator_model", None) or conn_model or "gemini-2.0-flash"
+        candidates = [chosen_model]
+        for m in ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gpt-4o-mini"]:
+            if m not in candidates:
+                candidates.append(m)
+    
+    if not is_custom:
+        if args.method == "lima":
+            print(f"3. Esecuzione Pipeline LIMA ad Alta Qualità (Modello primario: {candidates[0]}, Fallback: {candidates[1:4]}, Target: {args.target_samples} campioni)...", flush=True)
+            from aiforge.data.lima_pipeline import LIMAPipeline
+            
+            target_model = candidates[0]
+            pipeline = LIMAPipeline(
+                client=client,
+                model_name=target_model,
+                min_request_delay=2.0,
+                max_retries=5,
+                fallback_models=candidates[1:],
+            )
+            
+            def lima_progress(pct, msg):
+                scaled_pct = int(20 + (pct * 0.40))  # Scale LIMA generation to 20-60%
+                print(f"PROGRESS: {scaled_pct}", flush=True)
+                print(f"LIMA [{pct}%]: {msg}", flush=True)
+
+            turn_type = getattr(args, "turn_type", "single_turn")
+            res_lima = pipeline.run_pipeline(
+                job_id=clean_name,
+                main_topic=args.topic,
+                target_samples=args.target_samples,
+                batch_size=args.batch_size,
+                output_final_path=dataset_path,
+                turn_type=turn_type,
+                progress_cb=lima_progress
+            )
+            print(f"✅ Dataset LIMA Curato: {res_lima['curated_count']} campioni salvati (Filtrati da {res_lima['raw_staged_count']} grezzi)!", flush=True)
+        else:
+            print("3. Generazione dataset sintetico rapido (Quick Mode)...", flush=True)
+            prompt = f"""Crea 15 esempi didattici in formato JSON per il seguente topic: {args.topic}.
 Rispondi ESCLUSIVAMENTE con un array JSON valido, senza blocchi di codice markdown.
 Struttura:
 [
@@ -100,35 +112,35 @@ Struttura:
   }}
 ]"""
 
-        response = None
-        for target_model in candidates:
+            response = None
+            for target_model in candidates:
+                try:
+                    response = client.chat.completions.create(
+                        model=target_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7
+                    )
+                    print(f"✅ Generazione riuscita con {target_model} (OpenAI Compatible)!", flush=True)
+                    break
+                except Exception as err:
+                    print(f"⚠️ {target_model} non disponibile: {err}", flush=True)
+                    time.sleep(2)
+
+            if not response:
+                print("❌ Generazione fallita.", flush=True)
+                sys.exit(1)
+
+            print("PROGRESS: 40", flush=True)
             try:
-                response = client.chat.completions.create(
-                    model=target_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7
-                )
-                print(f"✅ Generazione riuscita con {target_model} (OpenAI Compatible)!", flush=True)
-                break
-            except Exception as err:
-                print(f"⚠️ {target_model} non disponibile: {err}", flush=True)
-                time.sleep(2)
-
-        if not response:
-            print("❌ Generazione fallita.", flush=True)
-            sys.exit(1)
-
-        print("PROGRESS: 40", flush=True)
-        try:
-            items = parse_llm_json(response.choices[0].message.content or "")
-            os.makedirs("datasets", exist_ok=True)
-            with open(dataset_path, "w", encoding="utf-8") as f:
-                for item in items:
-                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
-            print(f"✅ Dataset generato: {len(items)} esempi salvati in {dataset_path}!", flush=True)
-        except Exception as e:
-            print(f"❌ Errore parsing dataset: {e}", flush=True)
-            sys.exit(1)
+                items = parse_llm_json(response.choices[0].message.content or "")
+                os.makedirs("datasets", exist_ok=True)
+                with open(dataset_path, "w", encoding="utf-8") as f:
+                    for item in items:
+                        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+                print(f"✅ Dataset generato: {len(items)} esempi salvati in {dataset_path}!", flush=True)
+            except Exception as e:
+                print(f"❌ Errore parsing dataset: {e}", flush=True)
+                sys.exit(1)
 
     print("PROGRESS: 60", flush=True)
     print("4. Preparazione configurazione per il fine-tuning LoRA...", flush=True)
@@ -244,9 +256,10 @@ def main():
     parser = argparse.ArgumentParser(description="AIFORGE Unified Forge Training Pipeline")
     parser.add_argument("--name", required=True, help="Experiment name")
     parser.add_argument("--model", required=True, help="Base model HuggingFace ID")
-    parser.add_argument("--topic", required=True, help="Topic for synthetic dataset generation")
+    parser.add_argument("--topic", default="", help="Topic for synthetic dataset generation (optional if --dataset is provided)")
+    parser.add_argument("--dataset", default=None, help="Path to pre-existing JSONL dataset (skips LLM generation)")
     parser.add_argument("--qlora", action="store_true", default=False, help="Enable 4-bit NF4 QLoRA quantization")
-    parser.add_argument("--method", choices=["quick", "lima"], default="quick", help="Dataset generation strategy: 'quick' or 'lima'")
+    parser.add_argument("--method", choices=["quick", "lima", "custom"], default="quick", help="Dataset generation strategy: 'quick', 'lima', or 'custom'")
     parser.add_argument("--target-samples", type=int, default=100, help="Target curated samples count for LIMA")
     parser.add_argument("--batch-size", type=int, default=20, help="Micro-batch size for LIMA generation")
     parser.add_argument("--turn-type", choices=["single_turn", "multi_turn"], default="single_turn", help="Dialogue structure: 'single_turn' or 'multi_turn'")

@@ -122,6 +122,15 @@ class ResourcePreflight:
         }
 
 
+SUPPORTED_MERGE_STRATEGIES = {
+    "lora_merge",
+    "multi_lora_merge",
+    "linear_weight",
+    "slerp",
+    "dare_linear",
+}
+
+
 class MergeLab:
     def __init__(self, registry: ExperimentRegistry):
         self.registry = registry
@@ -151,6 +160,9 @@ class MergeLab:
 
     def validate_pre_merge(self, req: MergeRequest) -> Dict[str, Any]:
         """Validates if two models can be merged under the chosen strategy."""
+        if req.strategy not in SUPPORTED_MERGE_STRATEGIES:
+            return {"status": "UNKNOWN", "incompatibilities": [f"Strategy {req.strategy} not supported."]}
+
         cfg_a = self._get_model_config(req.model_a_id)
         cfg_b = self._get_model_config(req.model_b_id)
         
@@ -194,19 +206,24 @@ class MergeLab:
 
     def execute_merge(self, req: MergeRequest) -> str:
         """Executes the merge operation non-destructively and saves to registry."""
+        if req.strategy not in SUPPORTED_MERGE_STRATEGIES:
+            raise ValueError(f"Unsupported merge strategy: '{req.strategy}'")
+
+        self.registry.validate_display_name(req.output_name)
+
         validation = self.validate_pre_merge(req)
-        if validation["status"] == "INCOMPATIBLE":
-            raise ValueError(f"Merge incompatible: {validation['incompatibilities']}")
+        if validation["status"] not in ("COMPATIBLE", "COMPATIBLE_WITH_WARNINGS"):
+            reasons = validation.get("incompatibilities") or validation.get("warnings") or [validation["status"]]
+            raise ValueError(f"Merge cannot proceed ({validation['status']}): {reasons}")
 
         cfg_a = self._get_model_config(req.model_a_id)
         cfg_b = self._get_model_config(req.model_b_id)
         
-        import uuid
         import time
-        exp_id = req.output_name.replace(" ", "_") + "_" + str(uuid.uuid4())[:8]
-        reg_dir = getattr(self.registry, 'registry_dir', getattr(self.registry, 'registry_path', 'registry'))
-        artifact_path = os.path.join(reg_dir, exp_id)
-        os.makedirs(artifact_path, exist_ok=True)
+        exp_id = self.registry.generate_experiment_id(req.output_name)
+        # Validate both artifact dir and record path before creating anything on disk
+        self.registry.resolve_safe_path(f"exp_{exp_id}.json")
+        artifact_path = self.registry.resolve_safe_path(exp_id, allow_create_dirs=True)
         
         result_config = copy.deepcopy(cfg_a)
         result_config.experiment_name = req.output_name

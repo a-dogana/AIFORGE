@@ -98,6 +98,7 @@ class UnifiedOrchestrator:
     def __init__(self, config: ExperimentConfig, registry: ExperimentRegistry):
         self.config = config
         self.registry = registry
+        self.registry.validate_display_name(self.config.experiment_name)
         
         if config.architecture.type in ["mlp", "cnn"]:
             self.adapter = ClassicalAdapter(config)
@@ -106,22 +107,27 @@ class UnifiedOrchestrator:
         else:
             raise ValueError(f"UNSUPPORTED: Architecture '{config.architecture.type}' is not recognized.")
 
-    def run(self):
+    def run(self, experiment_id: Optional[str] = None):
         print(f"--- Unified Orchestrator: Starting {self.config.architecture.type.upper()} family training ---")
+        # Validate and pre-resolve safe ID & paths BEFORE training or creating any directory
+        self.registry.validate_display_name(self.config.experiment_name)
+        exp_id = (
+            self.registry._validate_id(experiment_id)
+            if experiment_id is not None
+            else self.registry.generate_experiment_id(self.config.experiment_name)
+        )
+        self.registry.resolve_safe_path(exp_id)
+        self.registry.resolve_safe_path(f"exp_{exp_id}.json")
+
         self.adapter.prepare()
         results = self.adapter.train()
         
-        # Save to registry
-        import uuid
+        # Save to registry inside validated directory
         import time
-        exp_id = self.config.experiment_name.replace(" ", "_") + "_" + str(uuid.uuid4())[:8]
-        reg_dir = getattr(self.registry, 'registry_dir', getattr(self.registry, 'registry_path', 'registry'))
-        artifact_path = os.path.join(reg_dir, exp_id)
-        os.makedirs(artifact_path, exist_ok=True)
-        
-        # Serialize config
         import yaml
-        with open(os.path.join(artifact_path, "config.yaml"), "w") as f:
+        artifact_path = self.registry.resolve_safe_path(exp_id, allow_create_dirs=True)
+        config_file = self.registry.resolve_safe_path(exp_id, "config.yaml")
+        with open(config_file, "w") as f:
             yaml.dump(self.config.model_dump(), f)
             
         # Adapter save

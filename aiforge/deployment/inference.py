@@ -74,14 +74,23 @@ class InferenceEngine:
     def _preprocess_tabular(self, data: Union[List[List[float]], np.ndarray]) -> torch.Tensor:
         if isinstance(data, list):
             data = np.array(data, dtype=np.float32)
+        else:
+            data = np.asarray(data, dtype=np.float32).copy()
             
         if len(data.shape) == 1:
             data = data.reshape(1, -1)
+
+        # Apply saved imputation means if present and input contains NaN
+        imputation = self.artifacts.get("imputation", {})
+        if "means" in imputation and np.isnan(data).any():
+            means = np.array(imputation["means"], dtype=np.float32)
+            nan_mask = np.isnan(data)
+            data[nan_mask] = np.take(means, np.where(nan_mask)[1])
             
         # Apply standard scaler if present
         if "scaler" in self.artifacts:
-            mean = np.array(self.artifacts["scaler"]["mean"])
-            scale = np.array(self.artifacts["scaler"]["scale"])
+            mean = np.array(self.artifacts["scaler"]["mean"], dtype=np.float32)
+            scale = np.array(self.artifacts["scaler"]["scale"], dtype=np.float32)
             data = (data - mean) / scale
             
         return torch.tensor(data, dtype=torch.float32)

@@ -174,13 +174,19 @@ def _build_serve_command(experiment_id: str) -> List[str]:
             exp = registry.get_experiment_record(experiment_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="Experiment not found")
-        config = exp.get("config", {})
+        import copy
+        config = copy.deepcopy(exp.get("config", {}))
         if config.get("domain") != "llm":
             raise HTTPException(status_code=400, detail="Only LLM experiments can be started via UI")
+        try:
+            adapter_path = registry.resolve_checkpoint_path(exp)
+        except FileNotFoundError:
+            adapter_path = ""
+            llm_cfg = config.get("architecture", {}).get("llm_config")
+            if isinstance(llm_cfg, dict):
+                llm_cfg["lora_enabled"] = False
+                llm_cfg["qlora"] = False
         config_path = _write_tmp_config(experiment_id, config)
-        adapter_path = exp.get("checkpoint_path") or ""
-        if adapter_path.endswith(".pt"):
-            adapter_path = os.path.dirname(adapter_path)
 
     cmd = [sys.executable, "-m", "aiforge_cli", "serve-llm", "--config", config_path, "--port", str(LLM_SERVER_PORT)]
     if adapter_path and os.path.exists(adapter_path):

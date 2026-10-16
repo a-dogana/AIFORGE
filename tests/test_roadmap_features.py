@@ -62,7 +62,8 @@ def test_slerp_merge_lab_execution(tmp_path):
     out_id = lab.execute_merge(req)
     assert out_id is not None
     rec_out = registry.get_experiment_record(out_id)
-    assert os.path.exists(os.path.join(rec_out["checkpoint_path"], "model.pt"))
+    assert rec_out["checkpoint_path"].endswith(".pt")
+    assert os.path.isfile(rec_out["checkpoint_path"])
     assert rec_out["results"]["merge_strategy"] == "slerp"
 
 def test_resource_checker_nofile_guard():

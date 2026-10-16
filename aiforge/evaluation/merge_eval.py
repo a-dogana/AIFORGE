@@ -75,9 +75,6 @@ class MergeEvaluator:
 
         # ------------------- 1. LLM Evaluation via Perplexity -------------------
         if arch_type == "llm":
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-            from peft import PeftModel
-
             test_prompts = sample_texts or [
                 "Artificial intelligence and machine learning are transforming software engineering.",
                 "def binary_search(arr, target):\n    low, high = 0, len(arr) - 1\n    while low <= high:",
@@ -85,13 +82,11 @@ class MergeEvaluator:
                 "The quick brown fox jumps over the lazy dog."
             ]
 
-            merged_path = rec_c["checkpoint_path"]
             device = "mps" if torch.backends.mps.is_available() else "cpu"
 
             try:
-                # Load merged model
-                tokenizer_c = AutoTokenizer.from_pretrained(merged_path)
-                model_c = AutoModelForCausalLM.from_pretrained(merged_path, torch_dtype=torch.float32).to(device)
+                # Load merged model via centralized registry loader
+                model_c, tokenizer_c = self.registry.load_llm_for_inference(rec_c, device=device)
                 t0 = time.time()
                 ppl_c = self.compute_llm_perplexity(model_c, tokenizer_c, test_prompts, device=device)
                 t1 = time.time()
@@ -104,28 +99,27 @@ class MergeEvaluator:
                 # Evaluate baseline model A if present
                 ppl_a = None
                 if model_a_id.startswith("BASE:"):
-                    base_id = model_a_id.replace("BASE:", "")
-                    tok_a = AutoTokenizer.from_pretrained(base_id)
-                    mod_a = AutoModelForCausalLM.from_pretrained(base_id, torch_dtype=torch.float32).to(device)
+                    mod_a, tok_a = self.registry.load_llm_for_inference(model_a_id, device=device)
                     ppl_a = self.compute_llm_perplexity(mod_a, tok_a, test_prompts, device=device)
                     del mod_a
-                elif rec_a and "checkpoint_path" in rec_a:
-                    tok_a = AutoTokenizer.from_pretrained(rec_a["checkpoint_path"])
-                    mod_a = AutoModelForCausalLM.from_pretrained(rec_a["checkpoint_path"], torch_dtype=torch.float32).to(device)
+                elif rec_a:
+                    mod_a, tok_a = self.registry.load_llm_for_inference(rec_a, device=device)
                     ppl_a = self.compute_llm_perplexity(mod_a, tok_a, test_prompts, device=device)
                     del mod_a
 
                 if ppl_a is not None:
                     results["metrics"]["Model A"] = {"perplexity": ppl_a}
 
-                # Evaluate baseline model B if present and full model
+                # Evaluate baseline model B if present
                 ppl_b = None
-                if rec_b and "checkpoint_path" in rec_b and os.path.exists(os.path.join(rec_b["checkpoint_path"], "config.json")):
-                    tok_b = AutoTokenizer.from_pretrained(rec_b["checkpoint_path"])
-                    mod_b = AutoModelForCausalLM.from_pretrained(rec_b["checkpoint_path"], torch_dtype=torch.float32).to(device)
-                    ppl_b = self.compute_llm_perplexity(mod_b, tok_b, test_prompts, device=device)
-                    del mod_b
-                    results["metrics"]["Model B"] = {"perplexity": ppl_b}
+                if rec_b:
+                    try:
+                        mod_b, tok_b = self.registry.load_llm_for_inference(rec_b, device=device)
+                        ppl_b = self.compute_llm_perplexity(mod_b, tok_b, test_prompts, device=device)
+                        del mod_b
+                        results["metrics"]["Model B"] = {"perplexity": ppl_b}
+                    except Exception:
+                        pass
 
                 del model_c
                 if torch.backends.mps.is_available():
@@ -159,7 +153,7 @@ class MergeEvaluator:
 
             for name, rec in eval_targets:
                 model = ArchitectureEngine.get_model(cfg_obj)
-                model.load_state_dict(torch.load(f"{rec['checkpoint_path']}/model.pt", weights_only=True))
+                model.load_state_dict(self.registry.load_classical_state_dict(rec))
                 model.eval()
 
                 correct = 0

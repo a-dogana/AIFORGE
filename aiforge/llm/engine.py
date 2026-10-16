@@ -27,14 +27,37 @@ class LLMEngine:
     def load(self, local_path: Optional[str] = None):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         
+        if local_path and os.path.isfile(local_path):
+            local_path = os.path.dirname(local_path)
+            
         model_id = local_path if local_path else self.llm_config.model_id
         
         # Security: Do not trust remote code by default
         trust_remote = False
         
-        print(f"Loading LLM tokenizer from {model_id}...")
+        qlora_weights_path = (
+            os.path.join(local_path, "qlora_adapter.pt")
+            if local_path and os.path.exists(os.path.join(local_path, "qlora_adapter.pt"))
+            else None
+        )
+        peft_cfg_path = (
+            os.path.join(local_path, "adapter_config.json")
+            if local_path and os.path.exists(os.path.join(local_path, "adapter_config.json"))
+            else None
+        )
+        has_full_cfg = bool(local_path and os.path.exists(os.path.join(local_path, "config.json")))
+
+        # Resolve tokenizer source (fallback to base model if adapter dir lacks tokenizer files)
+        tok_source = model_id
+        if local_path and not any(
+            os.path.exists(os.path.join(local_path, fname))
+            for fname in ("tokenizer_config.json", "tokenizer.json", "vocab.json")
+        ):
+            tok_source = self.llm_config.model_id
+
+        print(f"Loading LLM tokenizer from {tok_source}...")
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_id, 
+            tok_source, 
             local_files_only=not self.llm_config.allow_download,
             trust_remote_code=trust_remote
         )
@@ -43,9 +66,6 @@ class LLMEngine:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
         is_qlora = getattr(self.llm_config, "qlora", False)
-        
-        # Check for QLoRA adapter in local_path
-        qlora_weights_path = os.path.join(local_path, "qlora_adapter.pt") if local_path and os.path.exists(os.path.join(local_path, "qlora_adapter.pt")) else None
 
         if is_qlora and not local_path:
             # Check if bitsandbytes is available on CUDA
@@ -129,6 +149,19 @@ class LLMEngine:
             adapter_weights = torch.load(qlora_weights_path, map_location="cpu", weights_only=True)
             loaded = load_qlora_state_dict(self.model, adapter_weights)
             print(f"Loaded {loaded} QLoRA adapter layers from {local_path}.")
+        elif peft_cfg_path and not has_full_cfg:
+            # Loading saved PEFT LoRA adapter directory
+            from peft import PeftModel
+            with open(peft_cfg_path, "r") as f:
+                peft_meta = json.load(f)
+            base_id = peft_meta.get("base_model_name_or_path") or self.llm_config.model_id
+            print(f"Loading base model {base_id} and PEFT adapter from {local_path}...")
+            base_model = AutoModelForCausalLM.from_pretrained(
+                base_id,
+                local_files_only=not self.llm_config.allow_download,
+                trust_remote_code=trust_remote
+            )
+            self.model = PeftModel.from_pretrained(base_model, local_path)
         else:
             print(f"Loading LLM model from {model_id}...")
             self.model = AutoModelForCausalLM.from_pretrained(

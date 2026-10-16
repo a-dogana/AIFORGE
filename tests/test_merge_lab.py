@@ -50,12 +50,14 @@ def test_full_weight_merge_mlp(registry, tmp_path):
     # 2. Execute Merge
     out_id = lab.execute_merge(req)
     
-    # 3. Verify resulting weights
+    # 3. Verify resulting weights (contract: MLP checkpoint_path is a .pt file, even when inputs A/B used legacy dir paths)
     rec_c = registry.get_experiment_record(out_id)
     assert rec_c is not None
+    assert rec_c["checkpoint_path"].endswith(".pt")
+    assert os.path.isfile(rec_c["checkpoint_path"])
     
     model_c = ArchitectureEngine.get_model(cfg_obj)
-    model_c.load_state_dict(torch.load(os.path.join(rec_c["checkpoint_path"], "model.pt"), weights_only=True))
+    model_c.load_state_dict(registry.load_classical_state_dict(rec_c))
     
     # Verify mathematically (w_c = 0.5 * w_a + 0.5 * w_b)
     for p_a, p_b, p_c in zip(model_a.parameters(), model_b.parameters(), model_c.parameters()):

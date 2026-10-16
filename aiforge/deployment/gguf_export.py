@@ -50,9 +50,7 @@ class GGUFExporter:
         if arch_type != "llm":
             raise ValueError(f"Only LLM models can be exported to GGUF (found '{arch_type}').")
 
-        checkpoint_path = rec.get("checkpoint_path", "")
-        if not checkpoint_path or not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint directory '{checkpoint_path}' does not exist.")
+        checkpoint_path = self.registry.resolve_checkpoint_path(rec)
 
         export_target = output_dir or os.path.join(checkpoint_path, "gguf_export")
         os.makedirs(export_target, exist_ok=True)

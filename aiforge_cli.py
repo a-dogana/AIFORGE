@@ -416,7 +416,14 @@ def run_llm_train(args):
             
             print("Saving Soup results to registry...")
             registry = ExperimentRegistry()
-            registry.save_experiment(config, res, {}, device_used="soup_env")
+            soup_ckpt = res.get("checkpoint_path")
+            registry.save_experiment(
+                config,
+                res,
+                {},
+                device_used="soup_env",
+                checkpoint_path=soup_ckpt,
+            )
             print("\nSoup Training completed successfully.")
             return
         except Exception as e:
@@ -444,6 +451,19 @@ def run_llm_train(args):
     
     out_dir = "deploy_llm_adapter"
     engine.save_adapters(out_dir)
+
+    registry = ExperimentRegistry()
+    exp_id = registry.generate_experiment_id(config.experiment_name)
+    reg_ckpt_dir = registry.resolve_safe_path(exp_id, allow_create_dirs=True)
+    engine.save_adapters(reg_ckpt_dir)
+    registry.save_experiment(
+        config,
+        res,
+        res.get("test_results", {}),
+        device_used=engine.device,
+        experiment_id=exp_id,
+        checkpoint_path=reg_ckpt_dir,
+    )
     
     print("\n--- Adapted Inference (Test Sample) ---")
     adapted_out = engine.generate(prompt, max_new_tokens=20)

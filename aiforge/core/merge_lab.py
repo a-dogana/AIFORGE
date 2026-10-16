@@ -228,6 +228,7 @@ class MergeLab:
         result_config = copy.deepcopy(cfg_a)
         result_config.experiment_name = req.output_name
         
+        saved_ckpt_path = artifact_path
         try:
             # 1. LoRA Merge & Multi-LoRA Composition
             if req.strategy in ["lora_merge", "multi_lora_merge"]:
@@ -236,39 +237,53 @@ class MergeLab:
                 
                 base_id = cfg_a.architecture.llm_config.model_id
                 adapter_record_b = self.registry.get_experiment_record(req.model_b_id)
-                adapter_path_b = adapter_record_b["checkpoint_path"]
+                adapter_path_b = self.registry.resolve_checkpoint_path(adapter_record_b)
                 
-                base_model = AutoModelForCausalLM.from_pretrained(base_id, torch_dtype=torch.float32, device_map="cpu")
-                tokenizer = AutoTokenizer.from_pretrained(base_id)
-                
-                # Check if multi-adapter composition is requested
-                if req.strategy == "multi_lora_merge" and req.additional_adapters:
-                    peft_model = PeftModel.from_pretrained(base_model, adapter_path_b, adapter_name="adapter_0")
-                    adapters = ["adapter_0"]
-                    weights = [float(req.alpha)]
-                    
-                    for idx, extra in enumerate(req.additional_adapters, start=1):
-                        extra_rec = self.registry.get_experiment_record(extra["model_id"])
-                        if extra_rec and "checkpoint_path" in extra_rec:
-                            ad_name = f"adapter_{idx}"
-                            peft_model.load_adapter(extra_rec["checkpoint_path"], adapter_name=ad_name)
-                            adapters.append(ad_name)
-                            weights.append(float(extra.get("weight", 0.5)))
-                            
-                    # Combine adapters using PEFT add_weighted_adapter
-                    peft_model.add_weighted_adapter(adapters=adapters, weights=weights, adapter_name="composite_merged")
-                    peft_model.set_adapter("composite_merged")
-                    merged_model = peft_model.merge_and_unload()
+                qlora_pt = os.path.join(adapter_path_b, "qlora_adapter.pt")
+                if os.path.isfile(qlora_pt) and not (req.strategy == "multi_lora_merge" and req.additional_adapters):
+                    merged_model, tokenizer = self.registry.load_llm_for_inference(
+                        adapter_record_b,
+                        device="cpu",
+                        merge_adapters=True,
+                    )
+                    merged_model.save_pretrained(artifact_path)
+                    tokenizer.save_pretrained(artifact_path)
+                    del merged_model
                 else:
-                    peft_model = PeftModel.from_pretrained(base_model, adapter_path_b)
-                    merged_model = peft_model.merge_and_unload()
-                
-                merged_model.save_pretrained(artifact_path)
-                tokenizer.save_pretrained(artifact_path)
+                    base_model = AutoModelForCausalLM.from_pretrained(base_id, torch_dtype=torch.float32, device_map="cpu")
+                    tokenizer = AutoTokenizer.from_pretrained(base_id)
+                    
+                    # Check if multi-adapter composition is requested
+                    if req.strategy == "multi_lora_merge" and req.additional_adapters:
+                        peft_model = PeftModel.from_pretrained(base_model, adapter_path_b, adapter_name="adapter_0")
+                        adapters = ["adapter_0"]
+                        weights = [float(req.alpha)]
+                        
+                        for idx, extra in enumerate(req.additional_adapters, start=1):
+                            extra_rec = self.registry.get_experiment_record(extra["model_id"])
+                            if extra_rec:
+                                extra_path = self.registry.resolve_checkpoint_path(extra_rec)
+                                ad_name = f"adapter_{idx}"
+                                peft_model.load_adapter(extra_path, adapter_name=ad_name)
+                                adapters.append(ad_name)
+                                weights.append(float(extra.get("weight", 0.5)))
+                                
+                        # Combine adapters using PEFT add_weighted_adapter
+                        peft_model.add_weighted_adapter(adapters=adapters, weights=weights, adapter_name="composite_merged")
+                        peft_model.set_adapter("composite_merged")
+                        merged_model = peft_model.merge_and_unload()
+                    else:
+                        peft_model = PeftModel.from_pretrained(base_model, adapter_path_b)
+                        merged_model = peft_model.merge_and_unload()
+                    
+                    merged_model.save_pretrained(artifact_path)
+                    tokenizer.save_pretrained(artifact_path)
+                    del base_model, peft_model, merged_model
                 
                 result_config.architecture.llm_config.model_id = artifact_path
                 result_config.architecture.llm_config.lora_enabled = False
-                del base_model, peft_model, merged_model
+                result_config.architecture.llm_config.qlora = False
+                saved_ckpt_path = artifact_path
                 
             # 2. Classical Weight Merging: Linear, SLERP, DARE
             elif req.strategy in ["linear_weight", "slerp", "dare_linear"]:
@@ -279,8 +294,8 @@ class MergeLab:
                 rec_a = self.registry.get_experiment_record(req.model_a_id)
                 rec_b = self.registry.get_experiment_record(req.model_b_id)
                 
-                model_a.load_state_dict(torch.load(os.path.join(rec_a["checkpoint_path"], "model.pt"), weights_only=True))
-                model_b.load_state_dict(torch.load(os.path.join(rec_b["checkpoint_path"], "model.pt"), weights_only=True))
+                model_a.load_state_dict(self.registry.load_classical_state_dict(rec_a))
+                model_b.load_state_dict(self.registry.load_classical_state_dict(rec_b))
                 
                 state_a = model_a.state_dict()
                 state_b = model_b.state_dict()
@@ -297,7 +312,9 @@ class MergeLab:
                         raise ValueError(f"Shape mismatch for tensor {key}")
                         
                 model_a.load_state_dict(state_a)
-                torch.save(model_a.state_dict(), os.path.join(artifact_path, "model.pt"))
+                pt_file = os.path.join(artifact_path, "model.pt")
+                torch.save(model_a.state_dict(), pt_file)
+                saved_ckpt_path = pt_file
                 del model_a, model_b, state_a, state_b
                 
         except Exception as e:
@@ -323,7 +340,7 @@ class MergeLab:
                 "additional_adapters": req.additional_adapters
             },
             "timestamp": time.time(),
-            "checkpoint_path": artifact_path
+            "checkpoint_path": saved_ckpt_path
         }
         self.registry.save_experiment_record(exp_id, record)
         

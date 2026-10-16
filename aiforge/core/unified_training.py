@@ -47,48 +47,70 @@ class ClassicalAdapter(TrainingAdapterBase):
         self.results = trainer.train(self.model, self.train_loader, self.val_loader)
         return self.results
 
-    def save(self, path: str):
-        if self.model:
-            torch.save(self.model.state_dict(), os.path.join(path, "model.pt"))
+    def save(self, path: str) -> str:
+        os.makedirs(path, exist_ok=True)
+        pt_file = os.path.join(path, "model.pt")
+        if self.model is not None:
+            best_state = getattr(self, "results", {}).get("best_model_state") if hasattr(self, "results") and isinstance(self.results, dict) else None
+            state_to_save = best_state if best_state is not None else self.model.state_dict()
+            torch.save(state_to_save, pt_file)
+        return pt_file
 
 
 class LLMAdapter(TrainingAdapterBase):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config)
         self.engine = None
+        self.results: Dict[str, Any] = {}
         
     def prepare(self):
+        if self.config.backend == "soup":
+            return
         from aiforge.llm.engine import LLMEngine
         self.engine = LLMEngine(self.config)
         self.engine.load()
 
     def train(self) -> Dict[str, Any]:
-        from aiforge.llm.engine import LLMEngine
-        if self.config.data.type != "csv":
-             raise ValueError("LLM training currently expects 'csv' or jsonl data type.")
+        if self.config.data.type not in ("csv", "jsonl"):
+            raise ValueError("LLM training expects 'csv' or 'jsonl' data type.")
         
-        # Simplified: pass the path directly to engine
         dataset_path = self.config.data.csv_config.path if self.config.data.csv_config else None
         if not dataset_path:
-             raise ValueError("LLM training requires dataset path in config.data.csv_config.path")
+            raise ValueError("LLM training requires dataset path in config.data.csv_config.path")
 
-        # Fallback to backend logic
         if self.config.backend == "soup":
             from aiforge.llm.backends.soup import SoupBackend
             backend = SoupBackend(self.config)
             self.results = backend.train(dataset_path)
-            # SoupBackend handles its own saving directly to registry within the run if integrated, but let's assume it returns standard format.
-            # Actually, `engine.train(dataset)` is what `run_llm_train` calls.
         else:
+            if self.engine is None:
+                from aiforge.llm.engine import LLMEngine
+                self.engine = LLMEngine(self.config)
+                self.engine.load()
             self.results = self.engine.train(dataset_path)
         
         return self.results
 
-    def save(self, path: str):
-        if self.engine and getattr(self.engine, 'model', None):
+    def save(self, path: str) -> str:
+        import shutil
+        os.makedirs(path, exist_ok=True)
+        if self.config.backend == "soup":
+            soup_ckpt = (self.results or {}).get("checkpoint_path")
+            if soup_ckpt and os.path.isdir(soup_ckpt) and os.path.abspath(soup_ckpt) != os.path.abspath(path):
+                shutil.copytree(soup_ckpt, path, dirs_exist_ok=True)
+            return path
+
+        llm_cfg = getattr(self.config.architecture, "llm_config", None)
+        is_adapter = bool(llm_cfg and (getattr(llm_cfg, "lora_enabled", False) or getattr(llm_cfg, "qlora", False)))
+        if self.engine is not None and is_adapter and hasattr(self.engine, "save_adapters"):
+            self.engine.save_adapters(path)
+            return path
+
+        if self.engine and getattr(self.engine, "model", None) and hasattr(self.engine.model, "save_pretrained"):
             self.engine.model.save_pretrained(path)
-        if self.engine and getattr(self.engine, 'tokenizer', None):
+        if self.engine and getattr(self.engine, "tokenizer", None) and hasattr(self.engine.tokenizer, "save_pretrained"):
             self.engine.tokenizer.save_pretrained(path)
+        return path
 
 
 class UnifiedOrchestrator:
@@ -130,16 +152,20 @@ class UnifiedOrchestrator:
         with open(config_file, "w") as f:
             yaml.dump(self.config.model_dump(), f)
             
-        # Adapter save
-        self.adapter.save(artifact_path)
+        # Adapter save returns unified checkpoint_path (.pt file for mlp/cnn, directory for llm)
+        saved_ckpt_path = self.adapter.save(artifact_path) or artifact_path
+        clean_results = dict(results or {})
+        clean_results.pop("best_model_state", None)
+        clean_results.pop("last_training_state", None)
+        clean_results.pop("checkpoint_path", None)
         
         record = {
             "id": exp_id,
             "experiment_name": self.config.experiment_name,
             "config": self.config.model_dump(),
-            "results": results,
+            "results": clean_results,
             "timestamp": time.time(),
-            "checkpoint_path": artifact_path
+            "checkpoint_path": saved_ckpt_path
         }
         self.registry.save_experiment_record(exp_id, record)
         print(f"--- Unified Orchestrator: Finished. Saved as {exp_id} ---")

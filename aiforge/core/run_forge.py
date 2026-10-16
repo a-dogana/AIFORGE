@@ -202,12 +202,9 @@ Struttura:
         training_results={"history": res.get("history", {}), "soup_version": res.get("soup_version")},
         evaluation_results={},
         device_used="mps",
-        experiment_id=clean_name
+        experiment_id=clean_name,
+        checkpoint_path=adapter_path,
     )
-    # Soup produces a PEFT adapter directory, not a .pt state dict: link it explicitly
-    record = registry.get_experiment_record(exp_id)
-    record["checkpoint_path"] = adapter_path
-    registry.save_experiment_record(exp_id, record)
     print("PROGRESS: 100", flush=True)
     print("🎉 Pipeline Forge Completata con Successo!", flush=True)
 

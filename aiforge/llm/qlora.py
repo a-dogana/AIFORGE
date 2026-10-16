@@ -11,7 +11,19 @@ import os
 import json
 import torch
 import torch.nn as nn
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+__all__ = [
+    "NF4_LEVELS",
+    "FP4_LEVELS",
+    "quantize_to_nf4",
+    "dequantize_from_nf4",
+    "NF4QuantizedLinear",
+    "apply_qlora_to_model",
+    "extract_qlora_state_dict",
+    "load_qlora_state_dict",
+    "fuse_qlora_model",
+]
 
 # Official NF4 quantile levels from Dettmers et al. (2023) "QLoRA"
 NF4_LEVELS = torch.tensor([

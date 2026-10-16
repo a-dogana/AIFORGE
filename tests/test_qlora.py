@@ -141,3 +141,17 @@ def test_qlora_fuse_to_standard_linear():
     fused_out = fused_linear(x)
     
     assert torch.allclose(q_out, fused_out, atol=1e-4)
+
+
+def test_qlora_import_and_type_annotations():
+    import importlib
+    import typing
+    import aiforge.llm.qlora as qlora_mod
+
+    reloaded = importlib.reload(qlora_mod)
+    assert hasattr(reloaded, "Any")
+    hints_conv1d = typing.get_type_hints(reloaded.NF4QuantizedLinear.from_conv1d)
+    assert hints_conv1d["conv1d"] is typing.Any
+    hints_apply = typing.get_type_hints(reloaded.apply_qlora_to_model)
+    assert "return" in hints_apply
+

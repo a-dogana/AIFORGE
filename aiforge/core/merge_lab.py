@@ -339,7 +339,7 @@ class MergeLab:
                 "alpha": req.alpha,
                 "additional_adapters": req.additional_adapters
             },
-            "timestamp": time.time(),
+            "timestamp": self.registry.now_utc_iso(),
             "checkpoint_path": saved_ckpt_path
         }
         self.registry.save_experiment_record(exp_id, record)

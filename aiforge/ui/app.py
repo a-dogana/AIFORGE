@@ -263,10 +263,7 @@ def get_status():
 
 @app.get("/api/experiments")
 def list_experiments():
-    exps = registry.list_experiments()
-    # Sort by date descending (latest first)
-    exps.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-    return exps
+    return registry.list_experiments()
 
 
 @app.get("/api/experiments/{exp_id}")

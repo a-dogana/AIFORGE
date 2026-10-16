@@ -80,7 +80,8 @@ def list_experiments(args):
     print("-" * 75)
     for exp in experiments:
         exp_id = exp.get("id", "N/A")
-        date = exp.get("timestamp", "")[:19].replace("T", " ")
+        raw_ts = exp.get("timestamp", "")
+        date = str(raw_ts)[:19].replace("T", " ") if raw_ts is not None else "N/A"
         name = exp.get("experiment_name", "N/A")
         
         # safely get accuracy

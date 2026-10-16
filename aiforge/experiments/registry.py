@@ -85,6 +85,51 @@ class ExperimentRegistry:
 
         return cur
 
+    @staticmethod
+    def now_utc_iso() -> str:
+        """Return current UTC timestamp in ISO 8601 format with timezone offset."""
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    @staticmethod
+    def parse_timestamp_epoch(raw_ts: Any, record_id: str = "unknown") -> Optional[float]:
+        """
+        Normalize a timestamp value to UNIX epoch seconds (float) for sorting/comparison.
+        Convention for legacy records:
+        - ``int`` / ``float``: treated as UNIX epoch seconds.
+        - Timezone-aware ISO 8601 string: converted to UTC epoch seconds.
+        - Naive ISO 8601 string (without timezone): assumed to be in local system timezone.
+        - Missing or malformed value: logs a diagnostic warning and returns ``None``.
+        """
+        import math
+
+        if raw_ts is None or isinstance(raw_ts, bool):
+            print(f"Warning: Missing or invalid timestamp in experiment '{record_id}': {raw_ts!r}")
+            return None
+        if isinstance(raw_ts, (int, float)):
+            val = float(raw_ts)
+            if not math.isfinite(val):
+                print(f"Warning: Non-finite numeric timestamp in experiment '{record_id}': {raw_ts!r}")
+                return None
+            return val
+        if isinstance(raw_ts, str):
+            s = raw_ts.strip()
+            if not s:
+                print(f"Warning: Empty timestamp in experiment '{record_id}'")
+                return None
+            if s.endswith("Z") or s.endswith("z"):
+                s = s[:-1] + "+00:00"
+            try:
+                dt = datetime.datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    # Legacy naive ISO string: assume system local timezone
+                    return dt.astimezone().timestamp()
+                return dt.timestamp()
+            except ValueError:
+                print(f"Warning: Malformed timestamp in experiment '{record_id}': {raw_ts!r}")
+                return None
+        print(f"Warning: Unsupported timestamp type in experiment '{record_id}': {type(raw_ts).__name__}")
+        return None
+
     def save_experiment(
         self,
         config: ExperimentConfig,
@@ -114,7 +159,7 @@ class ExperimentRegistry:
 
         # Pre-validate target record path before writing any checkpoint files
         file_path = self.resolve_safe_path(f"exp_{experiment_id}.json")
-        timestamp = datetime.datetime.now().isoformat()
+        timestamp = self.now_utc_iso()
         
         best_model_state = training_results.pop("best_model_state", None)
         last_training_state = training_results.pop("last_training_state", None)
@@ -390,8 +435,8 @@ class ExperimentRegistry:
         return record, training_state
 
     def list_experiments(self) -> List[Dict[str, Any]]:
-        experiments = []
-        for filename in os.listdir(self.registry_dir):
+        experiments: List[Dict[str, Any]] = []
+        for filename in sorted(os.listdir(self.registry_dir)):
             if filename.startswith("exp_") and filename.endswith(".json"):
                 with open(os.path.join(self.registry_dir, filename), "r") as f:
                     try:
@@ -399,5 +444,13 @@ class ExperimentRegistry:
                         experiments.append(record)
                     except json.JSONDecodeError:
                         print(f"Warning: Corrupted JSON record {filename}")
-        experiments.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+        def _sort_key(rec: Dict[str, Any]) -> Tuple[int, float, str]:
+            rec_id = str(rec.get("id", ""))
+            epoch = self.parse_timestamp_epoch(rec.get("timestamp"), record_id=rec_id or "unknown")
+            if epoch is None:
+                return (1, 0.0, rec_id)
+            return (0, -epoch, rec_id)
+
+        experiments.sort(key=_sort_key)
         return experiments

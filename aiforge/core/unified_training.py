@@ -145,7 +145,6 @@ class UnifiedOrchestrator:
         results = self.adapter.train()
         
         # Save to registry inside validated directory
-        import time
         import yaml
         artifact_path = self.registry.resolve_safe_path(exp_id, allow_create_dirs=True)
         config_file = self.registry.resolve_safe_path(exp_id, "config.yaml")
@@ -164,7 +163,7 @@ class UnifiedOrchestrator:
             "experiment_name": self.config.experiment_name,
             "config": self.config.model_dump(),
             "results": clean_results,
-            "timestamp": time.time(),
+            "timestamp": self.registry.now_utc_iso(),
             "checkpoint_path": saved_ckpt_path
         }
         self.registry.save_experiment_record(exp_id, record)

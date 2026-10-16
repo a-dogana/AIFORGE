@@ -122,3 +122,42 @@ def test_soup_backend_train_mocked(tmp_path):
         assert "checkpoint_path" in res
         assert res["soup_version"] == "Soup 1.0.0"
         assert res["backend"] == "soup"
+
+
+def test_soup_backend_windows_and_posix_paths(tmp_path, monkeypatch):
+    """Verify SoupBackend resolves Scripts/python.exe and Scripts/soup.exe on Windows (os.name == 'nt') and bin/* on POSIX."""
+    from aiforge.llm.backends.soup import resolve_soup_executables
+
+    win_env = tmp_path / "win_soup_env"
+    (win_env / "Scripts").mkdir(parents=True)
+    (win_env / "Scripts" / "python.exe").touch()
+    (win_env / "Scripts" / "soup.exe").touch()
+
+    py_win, cli_win = resolve_soup_executables(str(win_env), is_windows=True)
+    assert py_win.endswith(os.path.join("Scripts", "python.exe"))
+    assert cli_win.endswith(os.path.join("Scripts", "soup.exe"))
+
+    posix_env = tmp_path / "posix_soup_env"
+    (posix_env / "bin").mkdir(parents=True)
+    (posix_env / "bin" / "python").touch()
+    (posix_env / "bin" / "soup").touch()
+
+    py_pos, cli_pos = resolve_soup_executables(str(posix_env), is_windows=False)
+    assert py_pos.endswith(os.path.join("bin", "python"))
+    assert cli_pos.endswith(os.path.join("bin", "soup"))
+
+    # Simulate Windows runtime via monkeypatch on os.name
+    import aiforge.llm.backends.soup as soup_mod
+    monkeypatch.setattr(soup_mod.os, "name", "nt")
+    cfg = ExperimentConfig(
+        experiment_name="test_soup_win",
+        domain="llm",
+        task="generation",
+        architecture={"type": "llm", "llm_config": {"model_id": "gpt2", "lora_enabled": True}},
+        data={"type": "jsonl", "csv_config": {"path": "datasets/test.jsonl", "target_column": "output"}},
+        backend="soup",
+        backend_args={"soup_env_path": str(win_env)},
+    )
+    backend = SoupBackend(cfg)
+    assert backend.soup_python == py_win
+    assert backend.soup_cli == cli_win

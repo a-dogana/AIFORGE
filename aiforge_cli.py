@@ -408,10 +408,12 @@ def run_llm_train(args):
         
     if config.backend == "soup":
         print("\n--- Using Soup Backend ---")
-        from aiforge.llm.backends.soup import SoupBackend
+        from aiforge.llm.backends.soup import SoupBackend, resolve_soup_env
         from aiforge.experiments.registry import ExperimentRegistry
         
         try:
+            if not config.backend_args.get("soup_env_path"):
+                config.backend_args["soup_env_path"] = resolve_soup_env()
             backend = SoupBackend(config)
             res = backend.train(args.dataset)
             

@@ -8,30 +8,9 @@ from typing import Optional
 from openai import OpenAI
 from aiforge.core.secrets import get_secret
 from aiforge.core.config import ExperimentConfig
-from aiforge.llm.backends.soup import SoupBackend
+from aiforge.llm.backends.soup import SoupBackend, resolve_soup_env
 from aiforge.experiments.registry import ExperimentRegistry
 from aiforge.data.json_utils import parse_llm_json
-
-
-def resolve_soup_env() -> str:
-    """Resolve the Soup virtual environment path dynamically."""
-    # 1. Explicit environment variable
-    env_soup = os.environ.get("SOUP_ENV_PATH")
-    if env_soup and os.path.exists(env_soup):
-        return os.path.abspath(env_soup)
-    
-    # 2. Local workspace venv_soup
-    local_soup = os.path.abspath("./venv_soup")
-    if os.path.exists(local_soup):
-        return local_soup
-
-    # 3. User home directory fallback (~/.aiforge/venv_soup)
-    home_soup = os.path.expanduser("~/.aiforge/venv_soup")
-    if os.path.exists(home_soup):
-        return home_soup
-
-    # 4. Default to ./venv_soup so error messages are actionable
-    return local_soup
 
 
 def get_llm_client():

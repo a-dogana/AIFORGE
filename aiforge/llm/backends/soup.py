@@ -3,10 +3,45 @@ import subprocess
 import yaml
 import tempfile
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from aiforge.core.config import ExperimentConfig
 from aiforge.experiments.registry import ExperimentRegistry
+
+
+def resolve_soup_env() -> str:
+    """Resolve the Soup virtual environment path dynamically across CLI, Forge, and SoupBackend."""
+    env_soup = os.environ.get("SOUP_ENV_PATH")
+    if env_soup and os.path.exists(env_soup):
+        return os.path.abspath(env_soup)
+
+    local_soup = os.path.abspath("./venv_soup")
+    if os.path.exists(local_soup):
+        return local_soup
+
+    home_soup = os.path.expanduser("~/.aiforge/venv_soup")
+    if os.path.exists(home_soup):
+        return home_soup
+
+    return local_soup
+
+
+def resolve_soup_executables(soup_env_path: str, is_windows: Optional[bool] = None) -> Tuple[str, str]:
+    """
+    Resolve (python_executable, soup_executable) inside ``soup_env_path``
+    in a cross-platform way (Windows ``Scripts/*.exe`` vs POSIX ``bin/*``).
+    """
+    win = (os.name == "nt") if is_windows is None else bool(is_windows)
+    if win:
+        scripts_dir = os.path.join(soup_env_path, "Scripts")
+        soup_py = os.path.join(scripts_dir, "python.exe")
+        soup_cli = os.path.join(scripts_dir, "soup.exe")
+    else:
+        bin_dir = os.path.join(soup_env_path, "bin")
+        soup_py = os.path.join(bin_dir, "python")
+        soup_cli = os.path.join(bin_dir, "soup")
+    return soup_py, soup_cli
+
 
 class SoupBackend:
     """Optional backend for delegating LLM training to Soup in an isolated environment."""
@@ -14,11 +49,12 @@ class SoupBackend:
     def __init__(self, config: ExperimentConfig):
         self.config = config
         self.soup_env_path = config.backend_args.get("soup_env_path")
+        if self.soup_env_path == "auto":
+            self.soup_env_path = resolve_soup_env()
         if not self.soup_env_path:
             raise ValueError("soup_env_path is required in backend_args when using the 'soup' backend.")
             
-        self.soup_python = os.path.join(self.soup_env_path, "bin", "python")
-        self.soup_cli = os.path.join(self.soup_env_path, "bin", "soup")
+        self.soup_python, self.soup_cli = resolve_soup_executables(self.soup_env_path)
         
         self.check_availability()
         

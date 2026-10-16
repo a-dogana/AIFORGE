@@ -244,12 +244,13 @@ class LLMEngine:
         return out_text
 
     def _encode_sft_dataset(self, raw_rows):
-        """Validate schema and encode all rows using the shared SFT chat-template encoder."""
+        """Validate schema, encode all rows, and discard truncated rows lacking supervised target tokens."""
         from aiforge.llm.sft_data import (
             CHATML_TEMPLATE,
             detect_dataset_schema,
             encode_example,
             ensure_chat_template,
+            filter_supervised_examples,
         )
 
         schema = detect_dataset_schema(raw_rows)
@@ -272,7 +273,17 @@ class LLMEngine:
                     "_raw_index": idx,
                 }
             )
-        return schema, encoded_rows
+        valid_rows, stats = filter_supervised_examples(encoded_rows)
+        print(
+            f"SFT dataset filtering (max_seq_length={self.llm_config.max_seq_length}): "
+            f"initial={stats['initial']}, valid={stats['valid']}, discarded={stats['discarded']}"
+        )
+        if len(valid_rows) < 3:
+            raise ValueError(
+                f"Insufficient valid SFT examples after truncation filtering: "
+                f"{stats['valid']} valid out of {stats['initial']} initial ({stats['discarded']} discarded; minimum 3 required)."
+            )
+        return schema, valid_rows, stats
 
     def train(self, dataset_path: str):
         if not (self.llm_config.lora_enabled or getattr(self.llm_config, "qlora", False)):
@@ -290,8 +301,8 @@ class LLMEngine:
             
         dataset = dataset.shuffle(seed=self.config.seed)
         raw_list = [dataset[i] for i in range(len(dataset))]
-        schema, encoded_all = self._encode_sft_dataset(raw_list)
-        print(f"Detected SFT dataset schema: '{schema}' ({len(encoded_all)} examples)")
+        schema, encoded_all, dataset_stats = self._encode_sft_dataset(raw_list)
+        print(f"Detected SFT dataset schema: '{schema}' ({len(encoded_all)} valid examples)")
 
         train_size = max(1, int(0.8 * len(encoded_all)))
         val_size = max(1, int(0.1 * len(encoded_all)))
@@ -406,6 +417,7 @@ class LLMEngine:
             "history": history,
             "test_results": test_results,
             "schema": schema,
+            "dataset_stats": dataset_stats,
             "splits": {"train": len(train_encoded), "val": len(val_encoded), "test": len(test_ds)},
         }
         

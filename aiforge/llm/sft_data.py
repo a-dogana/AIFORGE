@@ -152,6 +152,28 @@ def encode_example(tokenizer, example: Dict[str, Any], max_length: int) -> Dict[
     return encode_messages(tokenizer, to_messages(example), max_length)
 
 
+def has_supervised_target_tokens(labels: List[int]) -> bool:
+    """
+    Return True iff ``labels`` contains at least one supervised target token
+    after the causal language-modeling shift (``labels[1:] != -100``).
+    """
+    if not labels or len(labels) < 2:
+        return False
+    return any(lbl != IGNORE_INDEX for lbl in labels[1:])
+
+
+def filter_supervised_examples(encoded_rows: List[Dict[str, Any]]):
+    """
+    Filter out truncated examples that have zero supervised target tokens after causal shift.
+    Returns ``(valid_rows, stats)`` where ``stats = {"initial": int, "valid": int, "discarded": int}``.
+    """
+    initial = len(encoded_rows)
+    valid_rows = [row for row in encoded_rows if has_supervised_target_tokens(row.get("labels", []))]
+    discarded = initial - len(valid_rows)
+    stats = {"initial": initial, "valid": len(valid_rows), "discarded": discarded}
+    return valid_rows, stats
+
+
 def split_for_generation(example: Dict[str, Any]):
     """Return (prompt_messages, expected_answer) using the last assistant turn as target."""
     msgs = to_messages(example)
